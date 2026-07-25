@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hex grid spellcaster prototype</title>
+<style>
+  :root {
+    --text-secondary: #5f5e5a;
+    --text-muted: #888780;
+    --border: #d3d1c7;
+    --surface-1: #f1efe8;
+    --font-mono: ui-monospace, monospace;
+  }
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: none; cursor: pointer; }
+  button:hover { background: var(--surface-1); }
+</style>
+</head>
+<body>
+<h1 style="font-size:20px;font-weight:500;">Hex grid spellcaster prototype</h1>
+<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+  <button id="undo">Undo stroke</button>
+  <button id="clear">Clear</button>
+  <label style="font-size:13px;color:var(--text-secondary);margin-left:auto;">Density</label>
+  <input type="range" id="sp" min="20" max="56" step="4" value="40" style="width:90px;direction:rtl;">
+  <label style="font-size:13px;color:var(--text-secondary);">Cluster reach</label>
+  <input type="range" id="reach" min="1" max="3" step="0.5" value="1.5" style="width:90px">
+  <span id="reachOut" style="font-size:13px;font-family:var(--font-mono);color:var(--text-secondary);min-width:34px;">1.5×</span>
+</div>
+<div style="background:var(--surface-1);border-radius:12px;padding:8px;">
+  <canvas id="cv" style="width:100%;display:block;touch-action:none;cursor:crosshair;"></canvas>
+</div>
+<div id="list" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;min-height:28px;"></div>
+<script>
+/*
+ * Hex grid spellcaster prototype
+ *
+ * Core ideas:
+ * - Points form a triangular (hex) lattice; strokes may only connect adjacent
+ *   lattice points, so every stroke is a path of unit edges (like Hexcasting).
+ * - While drawing, dragging back onto the previous point erases the last
+ *   segment (only until you release).
+ * - Committed strokes are clustered into "drawings" via union-find: two
+ *   strokes merge if any pair of their points is within REACH * spacing.
+ * - Recognition runs on the cluster's merged edge graph. Because everything
+ *   is lattice-aligned, all turns are multiples of 60 degrees and
+ *   classification is exact integer math (no fuzzy geometry).
+ */
+
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const COLORS = ['#7F77DD','#1D9E75','#D85A30','#378ADD','#D4537E','#BA7517'];
+let S = 40;            // lattice spacing in px
+let REACH = 1.5;       // cluster link distance, in multiples of S
+let pts = [];          // lattice points [{x, y}]
+let strokes = [];      // committed strokes [{ ids: [pointIndex] }]
+let clusters = [];     // computed groupings
+let cur = null;        // in-progress stroke { ids, edges:Set }
+let cursor = null;     // current pointer pos for the rubber-band preview
+let W = 0, H = 440, dpr = window.devicePixelRatio || 1;
+
+function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim() || '#888'; }
+
+function buildGrid(){
+  pts = [];
+  W = cv.parentElement.clientWidth - 16;
+  const dy = S * Math.sqrt(3) / 2;
+  const rows = Math.floor((H - 24) / dy) + 1;
+  for (let r = 0; r < rows; r++){
+    const off = (r % 2) * S / 2;              // odd rows shift half a step
+    const cols = Math.floor((W - 24 - off) / S) + 1;
+    for (let c = 0; c < cols; c++) pts.push({ x: 12 + off + c * S, y: 12 + r * dy });
+  }
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function nearest(x, y, rad){
+  let best = -1, bd = rad * rad;
+  for (let i = 0; i < pts.length; i++){
+    const dx = pts[i].x - x, dy = pts[i].y - y, d = dx*dx + dy*dy;
+    if (d < bd){ bd = d; best = i; }
+  }
+  return best;
+}
+
+function adjacent(a, b){
+  const dx = pts[a].x - pts[b].x, dy = pts[a].y - pts[b].y;
+  return Math.abs(Math.sqrt(dx*dx + dy*dy) - S) < S * 0.15;
+}
+
+function edgeKey(a, b){ return a < b ? a + '-' + b : b + '-' + a; }
+
+// Direction of edge a->b as one of 6 sectors (multiples of 60 degrees).
+function dirOf(a, b){
+  const ang = Math.atan2(pts[b].y - pts[a].y, pts[b].x - pts[a].x);
+  return ((Math.round(ang / (Math.PI/3)) % 6) + 6) % 6;
+}
+
+// Signed turn between two directions: 0 straight, +/-1 = 60deg, +/-2 = 120deg, 3 = reverse.
+function signedTurn(d1, d2){
+  const t = ((d2 - d1) % 6 + 6) % 6;
+  return t <= 3 ? t : t - 6;
+}
+
+// roundRect fallback (ctx.roundRect is missing in some Chromium builds)
+function rrect(x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/* ---------- shape recognition ---------- */
+
+function classifyPath(seq){
+  const turns = [];
+  for (let i = 2; i < seq.length; i++)
+    turns.push(signedTurn(dirOf(seq[i-2], seq[i-1]), dirOf(seq[i-1], seq[i])));
+  if (turns.every(t => t === 0)) return 'line';
+  const nz = turns.filter(t => t !== 0);
+  if (nz.every(t => Math.abs(t) === 1) && nz.every(t => t === nz[0]) && nz.length >= 2) return 'arc';
+  let alt = nz.length >= 2;
+  for (let i = 1; i < nz.length; i++) if (nz[i] * nz[i-1] > 0) alt = false;
+  if (alt) return 'zigzag';
+  return 'curve';
+}
+
+function classifyCycle(seq){
+  const n = seq.length;
+  const turns = [];
+  for (let i = 0; i < n; i++){
+    const a = seq[(i - 1 + n) % n], b = seq[i], c = seq[(i + 1) % n];
+    turns.push(signedTurn(dirOf(a, b), dirOf(b, c)));
+  }
+  const nz = turns.filter(t => t !== 0);  // corners
+  if (nz.length === 3) return 'triangle';
+  if (nz.length === 4) return 'diamond';
+  if (n === 6 && nz.length === 6 && nz.every(t => Math.abs(t) === 1)) return 'hexagon';
+  if (nz.length >= 5 && nz.every(t => t === nz[0]) && Math.abs(nz[0]) === 1) return 'circle-ish';
+  return 'polygon';
+}
+
+function classifyComponent(verts, adj){
+  const degs = verts.map(v => adj[v].length);
+  if (Math.max(...degs) >= 4) return 'star';
+  if (degs.includes(3)) return 'branched';
+  const ends = verts.filter(v => adj[v].length === 1);
+  if (ends.length === 2){
+    // open path: walk end to end
+    const seq = [ends[0]];
+    let prev = -1, curV = ends[0], guard = 0;
+    while (guard++ < 1000){
+      const next = adj[curV].find(v => v !== prev);
+      if (next === undefined) break;
+      seq.push(next); prev = curV; curV = next;
+      if (adj[curV].length === 1) break;
+    }
+    return classifyPath(seq);
+  }
+  if (ends.length === 0 && verts.length >= 3){
+    // closed loop: walk the cycle once
+    const start = verts[0], seq = [start];
+    let prev = -1, curV = start, guard = 0;
+    while (guard++ < 1000){
+      const next = adj[curV].find(v => v !== prev);
+      if (next === undefined || next === start) break;
+      seq.push(next); prev = curV; curV = next;
+    }
+    return classifyCycle(seq);
+  }
+  return 'glyph';
+}
+
+function classifyCluster(cl){
+  try {
+    const adj = {};
+    cl.edges.forEach(k => {
+      const [a, b] = k.split('-').map(Number);
+      (adj[a] = adj[a] || []).push(b);
+      (adj[b] = adj[b] || []).push(a);
+    });
+    const verts = Object.keys(adj).map(Number), seen = new Set(), names = [];
+    for (const v of verts){
+      if (seen.has(v)) continue;
+      const comp = [], q = [v];
+      seen.add(v);
+      while (q.length){
+        const u = q.pop(); comp.push(u);
+        adj[u].forEach(w => { if (!seen.has(w)){ seen.add(w); q.push(w); } });
+      }
+      names.push(classifyComponent(comp, adj));
+    }
+    return [...new Set(names)].join(' + ');
+  } catch(e){ return 'glyph'; }
+}
+
+/* ---------- clustering (union-find over strokes) ---------- */
+
+function computeClusters(){
+  const n = strokes.length, parent = [...Array(n).keys()];
+  const find = i => parent[i] === i ? i : (parent[i] = find(parent[i]));
+  const lim = (REACH * S + 2) ** 2;
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++){
+    let close = false;
+    for (const a of strokes[i].ids){
+      for (const b of strokes[j].ids){
+        const dx = pts[a].x - pts[b].x, dy = pts[a].y - pts[b].y;
+        if (dx*dx + dy*dy <= lim){ close = true; break; }
+      }
+      if (close) break;
+    }
+    if (close) parent[find(i)] = find(j);
+  }
+  const map = {};
+  clusters = [];
+  for (let i = 0; i < n; i++){
+    const r = find(i);
+    if (!(r in map)){
+      map[r] = clusters.length;
+      clusters.push({ strokes: [], edges: new Set(), ids: new Set(), color: COLORS[clusters.length % COLORS.length] });
+    }
+    const cl = clusters[map[r]];
+    cl.strokes.push(i);
+    strokes[i].ids.forEach(p => cl.ids.add(p));
+    for (let k = 1; k < strokes[i].ids.length; k++)
+      cl.edges.add(edgeKey(strokes[i].ids[k-1], strokes[i].ids[k]));
+  }
+  clusters.forEach(cl => { cl.label = classifyCluster(cl); });
+}
+
+/* ---------- rendering ---------- */
+
+function draw(){
+  ctx.clearRect(0, 0, W, H);
+  const used = new Set();
+  clusters.forEach(cl => cl.ids.forEach(i => used.add(i)));
+  if (cur) cur.ids.forEach(i => used.add(i));
+  const dot = css('--text-muted');
+  const dotR = Math.max(1.5, S * 0.05), dotRU = Math.max(2.5, S * 0.09);
+  for (let i = 0; i < pts.length; i++){
+    ctx.beginPath();
+    ctx.arc(pts[i].x, pts[i].y, used.has(i) ? dotRU : dotR, 0, 7);
+    ctx.fillStyle = dot;
+    ctx.globalAlpha = used.has(i) ? 0.9 : 0.35;
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const paint = (ids, color, wdt) => {
+    if (ids.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(pts[ids[0]].x, pts[ids[0]].y);
+    for (let i = 1; i < ids.length; i++) ctx.lineTo(pts[ids[i]].x, pts[ids[i]].y);
+    ctx.strokeStyle = color; ctx.lineWidth = wdt; ctx.stroke();
+  };
+  clusters.forEach(cl => {
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    cl.ids.forEach(i => {
+      x0 = Math.min(x0, pts[i].x); y0 = Math.min(y0, pts[i].y);
+      x1 = Math.max(x1, pts[i].x); y1 = Math.max(y1, pts[i].y);
+    });
+    ctx.globalAlpha = 0.25; ctx.setLineDash([3,4]);
+    ctx.strokeStyle = cl.color; ctx.lineWidth = 1;
+    rrect(x0 - 10, y0 - 10, x1 - x0 + 20, y1 - y0 + 20, 8);
+    ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    cl.strokes.forEach(si => paint(strokes[si].ids, cl.color, 3.5));
+    ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = cl.color;
+    const ly = y1 + 24 > H ? y0 - 16 : y1 + 22;
+    ctx.fillText(cl.label, (x0 + x1) / 2, ly);
+  });
+  if (cur){
+    const c = css('--text-secondary');
+    paint(cur.ids, c, 3.5);
+    if (cursor && cur.ids.length){
+      const last = pts[cur.ids[cur.ids.length - 1]];
+      ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(cursor.x, cursor.y);
+      ctx.strokeStyle = c; ctx.lineWidth = 2; ctx.globalAlpha = 0.35;
+      ctx.setLineDash([4,4]); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
+  }
+}
+
+function renderList(){
+  const el = document.getElementById('list');
+  el.innerHTML = '';
+  clusters.forEach(cl => {
+    const chip = document.createElement('div');
+    chip.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 10px;border:1px solid var(--border);border-radius:999px;color:var(--text-secondary);font-family:var(--font-mono);';
+    chip.innerHTML = '<span style="width:10px;height:10px;border-radius:50%;background:' + cl.color + '"></span>' + cl.label + ' · ' + cl.strokes.length + ' stroke' + (cl.strokes.length > 1 ? 's' : '') + ' · ' + cl.edges.size + ' edges';
+    el.appendChild(chip);
+  });
+}
+
+/* ---------- input ---------- */
+
+function pos(e){
+  const r = cv.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId);
+  const p = pos(e);
+  const i = nearest(p.x, p.y, S * 0.6);
+  if (i >= 0) cur = { ids: [i], edges: new Set() };
+  cursor = p; draw();
+});
+
+cv.addEventListener('pointermove', e => {
+  if (!cur) return;
+  cursor = pos(e);
+  const i = nearest(cursor.x, cursor.y, S * 0.45);
+  const last = cur.ids[cur.ids.length - 1];
+  if (i >= 0 && i !== last && adjacent(last, i)){
+    // Backtrack check must come FIRST: backtracking always crosses a used edge.
+    if (cur.ids.length > 1 && i === cur.ids[cur.ids.length - 2]){
+      cur.edges.delete(edgeKey(last, i));
+      cur.ids.pop();
+    } else if (!cur.edges.has(edgeKey(last, i))){
+      cur.edges.add(edgeKey(last, i));
+      cur.ids.push(i);
+    }
+  }
+  draw();
+});
+
+function refresh(){ computeClusters(); renderList(); draw(); }
+
+function finish(){
+  if (cur && cur.ids.length > 1) strokes.push({ ids: cur.ids });
+  cur = null; cursor = null; refresh();
+}
+cv.addEventListener('pointerup', finish);
+cv.addEventListener('pointercancel', finish);
+
+document.getElementById('undo').onclick = () => { strokes.pop(); refresh(); };
+document.getElementById('clear').onclick = () => { strokes = []; refresh(); };
+document.getElementById('sp').oninput = e => {
+  S = +e.target.value;
+  strokes = []; cur = null;
+  buildGrid(); refresh();
+};
+document.getElementById('reach').oninput = e => {
+  REACH = +e.target.value;
+  document.getElementById('reachOut').textContent = REACH.toFixed(1) + '×';
+  refresh();
+};
+
+// Only rebuild on real width changes; height-only resizes (e.g. content
+// below the canvas growing) must not wipe the drawing.
+window.addEventListener('resize', () => {
+  const newW = cv.parentElement.clientWidth - 16;
+  if (Math.abs(newW - W) < 2) return;
+  strokes = []; cur = null;
+  buildGrid(); refresh();
+});
+
+buildGrid(); refresh();
+</script>
+</body>
+</html>
