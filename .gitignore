@@ -6,3 +6,12 @@ export_presets.cfg
 # General system ignores
 .DS_Store
 Thumbs.db
+
+# Python virtual environment
+.venv/
+venv/
+__pycache__/
+
+# spells images for training
+dataset/
+dataset_prep/
