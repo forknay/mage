@@ -1,6 +1,7 @@
 # Godot-specific ignores
 .godot/
-.import/          # Godot 3 leftover; harmless to keep, Godot 4 uses .godot/
+# Godot 3 leftover; harmless to keep, Godot 4 uses .godot/
+.import/
 /android/
 
 # Export presets can carry absolute paths and Android keystore passwords.
