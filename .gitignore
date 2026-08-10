@@ -1,8 +1,40 @@
 # Godot-specific ignores
 .godot/
-.import/
+.import/          # Godot 3 leftover; harmless to keep, Godot 4 uses .godot/
+/android/
+
+# Export presets can carry absolute paths and Android keystore passwords.
+# Ignored on purpose. If the team wants shared presets, commit a sanitised
+# export_presets.example.cfg instead and copy it locally.
 export_presets.cfg
+
+*.translation
+
+# Builds
+/build/
+/export/
+*.pck
+*.exe
+*.x86_64
+*.dmg
+*.zip
+
+# Blender working files
+*.blend1
+*.blend2
+
+# Playtest output
+# Telemetry CSVs (3.2.5) are data, not source. Promote the runs that matter
+# into docs/playtest/ deliberately; do not let raw dumps accumulate.
+/telemetry/
+*.csv
 
 # General system ignores
 .DS_Store
 Thumbs.db
+desktop.ini
+*.swp
+*~
+.idea/
+.vscode/
+node_modules/
