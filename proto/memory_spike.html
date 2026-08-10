@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>P3 — Memorization spike</title>
+<style>
+  :root {
+    --bg: #14140f; --surface: #1e1e18; --surface-2: #26261e;
+    --text: #e8e6dd; --text-dim: #8d8b80; --border: #35342b;
+    --accent: #d4a017; --good: #4ea172; --bad: #c25a44;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text);
+         margin: 0; padding: 24px; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0 0 8px; text-align: center; }
+  .sub { font-size: 13px; color: var(--text-dim); max-width: 640px;
+         text-align: center; margin: 0 auto 16px; line-height: 1.5; }
+  /* Sized by the viewport, never by content: the drawing stage is a
+     width:100% canvas, so a shrink-to-fit ancestor collapses it to nothing
+     whenever the test screen is the only one visible. */
+  .wrap { width: 100%; max-width: 860px; margin: 0 auto; }
+  button { padding: 8px 15px; border: 1px solid var(--border); border-radius: 7px;
+           background: var(--surface); color: var(--text); cursor: pointer;
+           font-size: 13px; font-family: inherit; }
+  button:hover:not(:disabled) { background: var(--surface-2); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: var(--accent); color: #14140f;
+                   border-color: var(--accent); font-weight: 600; }
+  .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .card { background: var(--surface); border: 1px solid var(--border);
+          border-radius: 12px; padding: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .glyph { text-align: center; padding: 12px 8px; border: 1px solid var(--border);
+           border-radius: 10px; background: var(--surface-2); }
+  .glyph .nm { font-size: 12px; color: var(--text-dim); text-transform: uppercase;
+               letter-spacing: .09em; margin-top: 8px; }
+  canvas.thumb { width: 92px; height: 92px; }
+  .clock { font-family: var(--mono); font-size: 40px; font-variant-numeric: tabular-nums;
+           text-align: center; margin: 6px 0; }
+  .stage { position: relative; background: var(--surface); border: 1px solid var(--border);
+           border-radius: 12px; padding: 10px; }
+  canvas#cv { width: 100%; display: block; touch-action: none; cursor: crosshair; }
+  .prompt { position: absolute; top: 20px; left: 0; right: 0; text-align: center;
+            pointer-events: none; }
+  .prompt .big { font-size: 26px; font-weight: 600; letter-spacing: .02em; }
+  .prompt .small { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+  .banner { border-radius: 9px; padding: 11px 14px; font-size: 13px; line-height: 1.55;
+            border: 1px solid var(--border); background: var(--surface); }
+  .banner.pass { border-color: var(--good); }
+  .banner.fail { border-color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-size: 11px; text-transform: uppercase;
+       letter-spacing: .07em; font-weight: 500; }
+  .hidden { display: none !important; }
+  @media print {
+    body { background: #fff; color: #000; }
+    .noprint { display: none !important; }
+    .glyph { border-color: #bbb; background: #fff; page-break-inside: avoid; }
+    .card { border-color: #bbb; }
+    .glyph .nm { color: #444; }
+  }
+</style>
+</head>
+<body>
+
+<h1 class="noprint">P3 — Memorization spike</h1>
+<p class="sub noprint">
+  Study six sigils for 60 seconds, then reproduce them from memory
+  <strong>an hour later</strong>. Answers the one question the lattice design
+  rests on: is a grimoire the fun, or is it homework? Six rather than four,
+  deliberately — this measures the ceiling, not just whether the alpha's set survives.
+</p>
+
+<div class="wrap">
+
+  <!-- ---------------- intro ---------------- -->
+  <div id="screenIntro">
+    <div class="bar">
+      <button class="primary" id="btnStudy">Start 60s study</button>
+      <button id="btnPrint">Print study cards</button>
+      <button id="btnTestNow">Skip to test</button>
+      <button id="btnClear" style="margin-left:auto">Clear saved session</button>
+    </div>
+    <div class="banner" id="resume" style="display:none"></div>
+    <div class="card" style="margin-top:12px">
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">
+        THE STUDY SET &mdash; minimum separation 3 across all pairs, so no pattern
+        is within two mis-stepped edges of another
+      </div>
+      <div class="grid" id="introGrid"></div>
+    </div>
+  </div>
+
+  <!-- ---------------- study ---------------- -->
+  <div id="screenStudy" class="hidden">
+    <div class="clock" id="studyClock">60</div>
+    <div class="card"><div class="grid" id="studyGrid"></div></div>
+    <div class="banner" style="margin-top:12px">
+      When the timer ends, <strong>close this tab and come back in an hour</strong>.
+      The session is saved. Testing immediately measures short-term encoding, which
+      is not the thing in question.
+    </div>
+  </div>
+
+  <!-- ---------------- test ---------------- -->
+  <div id="screenTest" class="hidden">
+    <div class="bar">
+      <span style="font-size:13px;color:var(--text-dim)" id="testProgress"></span>
+      <button id="btnDunno" style="margin-left:auto">I don't remember</button>
+      <button id="btnClearDraw">Clear</button>
+    </div>
+    <div class="stage">
+      <canvas id="cv"></canvas>
+      <div class="prompt">
+        <div class="big" id="promptName">—</div>
+        <div class="small">draw it from memory &middot; release to commit</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------------- report ---------------- -->
+  <div id="screenReport" class="hidden">
+    <div class="banner" id="verdict"></div>
+    <table id="report">
+      <thead><tr><th>sigil</th><th>result</th><th>drawn</th><th>expected</th><th>edit distance</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="bar" style="margin-top:14px">
+      <button class="primary" id="btnAgain">Run again</button>
+      <button id="btnCsv">Export CSV</button>
+    </div>
+  </div>
+
+</div>
+
+<script src="glyph_core.js"></script>
+<script>
+const G = GlyphCore;
+const $ = id => document.getElementById(id);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const KEY = 'p3_study_session';
+
+// The alpha four, plus two beta candidates chosen by find_pattern.js so the
+// whole set of six keeps a minimum separation of 3.
+const STUDY_SET = G.ALPHA_PATTERNS.concat([
+  { id: 'chain', name: 'Chain', dirs: [2, 1, 1, 0, 0], parSec: 1.6 },
+  { id: 'frost', name: 'Frost', dirs: [1, 3, 2, 0, 0], parSec: 1.6 },
+]);
+
+/* ---------- glyph thumbnails ---------- */
+
+function glyphPath(dirs) {
+  const pts = [{ q: 0, r: 0 }];
+  let q = 0, r = 0;
+  for (const d of dirs) { q += G.DIRS[d][0]; r += G.DIRS[d][1]; pts.push({ q, r }); }
+  return pts;
+}
+
+function renderGlyph(c, dirs, w, h, color, lw) {
+  c.clearRect(0, 0, w, h);
+  const pts = glyphPath(dirs).map(p => G.axialToPixel(p.q, p.r, 1));
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const pad = lw * 2 + 4;
+  const sc = Math.min((w - pad * 2) / Math.max(x1 - x0, .001),
+                      (h - pad * 2) / Math.max(y1 - y0, .001));
+  const ox = (w - (x1 - x0) * sc) / 2 - x0 * sc;
+  const oy = (h - (y1 - y0) * sc) / 2 - y0 * sc;
+  c.beginPath();
+  pts.forEach((p, i) => {
+    const X = p.x * sc + ox, Y = p.y * sc + oy;
+    i ? c.lineTo(X, Y) : c.moveTo(X, Y);
+  });
+  c.strokeStyle = color; c.lineWidth = lw;
+  c.lineCap = 'round'; c.lineJoin = 'round'; c.stroke();
+  c.beginPath();
+  c.arc(pts[0].x * sc + ox, pts[0].y * sc + oy, lw * 1.35, 0, 7);
+  c.fillStyle = color; c.fill();
+}
+
+function fillGrid(el) {
+  el.innerHTML = '';
+  for (const p of STUDY_SET) {
+    const d = document.createElement('div');
+    d.className = 'glyph';
+    const c = document.createElement('canvas');
+    c.className = 'thumb'; c.width = 184; c.height = 184;
+    d.appendChild(c);
+    const n = document.createElement('div');
+    n.className = 'nm'; n.textContent = p.name;
+    d.appendChild(n);
+    el.appendChild(d);
+    renderGlyph(c.getContext('2d'), p.dirs, 184, 184,
+      window.matchMedia('print').matches ? '#000' : css('--accent'), 11);
+  }
+}
+
+/* ---------- lattice for the test phase ---------- */
+
+const cv = $('cv'), ctx = cv.getContext('2d');
+let S = 46, W = 0, H = 400, dpr = window.devicePixelRatio || 1;
+let points = [], index = new Map();
+let path = [], edges = new Set(), drawing = false, cursor = null;
+
+function buildGrid() {
+  W = cv.parentElement.clientWidth - 20;
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  points = []; index = new Map();
+  const pad = 30, rowH = S * G.SQRT3_2;
+  const rows = Math.floor((H - pad * 2) / rowH);
+  for (let r = 0; r <= rows; r++) {
+    const qMin = Math.ceil((pad - W / 2) / S - r / 2) - 1;
+    const qMax = Math.floor((W - pad - W / 2) / S - r / 2) + 1;
+    for (let q = qMin; q <= qMax; q++) {
+      const p = G.axialToPixel(q, r, S);
+      const x = p.x + W / 2, y = p.y + pad + 34;
+      if (x < pad || x > W - pad || y < pad + 34 || y > H - pad) continue;
+      const pt = { q, r, x, y };
+      points.push(pt); index.set(q + ',' + r, pt);
+    }
+  }
+}
+
+function nearest(x, y, radius) {
+  let best = null, bd = radius * radius;
+  for (const p of points) {
+    const dx = p.x - x, dy = p.y - y, d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+const eKey = (a, b) => {
+  const ka = a.q + ',' + a.r, kb = b.q + ',' + b.r;
+  return ka < kb ? ka + '|' + kb : kb + '|' + ka;
+};
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  const used = new Set(path.map(p => p.q + ',' + p.r));
+  for (const p of points) {
+    const on = used.has(p.q + ',' + p.r);
+    ctx.beginPath(); ctx.arc(p.x, p.y, on ? 4 : 2, 0, 7);
+    ctx.fillStyle = on ? css('--accent') : css('--border'); ctx.fill();
+  }
+  if (path.length > 1) {
+    ctx.beginPath(); ctx.moveTo(path[0].x, path[0].y);
+    for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+    ctx.strokeStyle = css('--accent'); ctx.lineWidth = 4;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
+  }
+  if (drawing && cursor && path.length) {
+    const l = path[path.length - 1];
+    ctx.beginPath(); ctx.moveTo(l.x, l.y); ctx.lineTo(cursor.x, cursor.y);
+    ctx.strokeStyle = css('--accent'); ctx.globalAlpha = .3;
+    ctx.setLineDash([4, 5]); ctx.lineWidth = 2; ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+  }
+}
+
+const lpos = e => {
+  const r = cv.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+};
+
+cv.addEventListener('pointerdown', e => {
+  if (phase !== 'test') return;
+  cv.setPointerCapture(e.pointerId);
+  const p = lpos(e), pt = nearest(p.x, p.y, S * .55);
+  if (!pt) return;
+  drawing = true; path = [pt]; edges = new Set(); cursor = p; draw();
+});
+cv.addEventListener('pointermove', e => {
+  if (!drawing) return;
+  cursor = lpos(e);
+  const pt = nearest(cursor.x, cursor.y, S * .45), last = path[path.length - 1];
+  if (pt && pt !== last && G.dirBetween(last.q, last.r, pt.q, pt.r) >= 0) {
+    if (path.length > 1 && pt === path[path.length - 2]) {
+      edges.delete(eKey(last, pt)); path.pop();
+    } else {
+      const k = eKey(last, pt);
+      if (!edges.has(k)) { edges.add(k); path.push(pt); }
+    }
+  }
+  draw();
+});
+function release() {
+  if (!drawing) return;
+  drawing = false; cursor = null;
+  if (path.length > 1) submit(false);
+  draw();
+}
+cv.addEventListener('pointerup', release);
+cv.addEventListener('pointercancel', release);
+
+/* ---------- phases ---------- */
+
+let phase = 'intro', order = [], testIdx = 0, answers = [], studiedAt = 0;
+
+function show(which) {
+  phase = which;
+  $('screenIntro').classList.toggle('hidden', which !== 'intro');
+  $('screenStudy').classList.toggle('hidden', which !== 'study');
+  $('screenTest').classList.toggle('hidden', which !== 'test');
+  $('screenReport').classList.toggle('hidden', which !== 'report');
+}
+
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function startStudy() {
+  show('study'); fillGrid($('studyGrid'));
+  let left = 60;
+  $('studyClock').textContent = left;
+  const iv = setInterval(() => {
+    left--;
+    $('studyClock').textContent = left;
+    if (left <= 0) {
+      clearInterval(iv);
+      studiedAt = Date.now();
+      localStorage.setItem(KEY, JSON.stringify({ studiedAt }));
+      $('studyClock').textContent = 'done';
+      $('studyGrid').innerHTML =
+        '<div style="grid-column:1/-1;text-align:center;color:var(--text-dim);' +
+        'font-size:13px;padding:26px 0">Session saved. Close the tab and come ' +
+        'back in an hour, then press &ldquo;Test now&rdquo;.</div>';
+      setTimeout(() => { show('intro'); refreshResume(); }, 2600);
+    }
+  }, 1000);
+}
+
+function startTest() {
+  order = shuffle(STUDY_SET.slice());
+  testIdx = 0; answers = [];
+  show('test'); buildGrid(); nextPrompt();
+}
+
+function nextPrompt() {
+  if (testIdx >= order.length) return report();
+  path = []; edges = new Set();
+  $('promptName').textContent = order[testIdx].name;
+  $('testProgress').textContent = (testIdx + 1) + ' of ' + order.length;
+  draw();
+}
+
+function submit(skipped) {
+  const want = order[testIdx];
+  const dirs = skipped ? null : G.pathToDirs(path.map(p => ({ q: p.q, r: p.r })));
+  const sig = dirs ? G.signature(dirs) : '';
+  const wantSig = G.signature(want.dirs);
+  answers.push({
+    id: want.id, name: want.name,
+    correct: !skipped && sig === wantSig,
+    skipped: skipped,
+    drawn: sig || '(skipped)',
+    expected: wantSig,
+    dist: dirs ? G.minVariantDistance(dirs, want.dirs) : null,
+  });
+  testIdx++;
+  setTimeout(nextPrompt, 180);
+}
+
+function report() {
+  show('report');
+  const right = answers.filter(a => a.correct).length;
+  const total = answers.length;
+  const alphaFour = answers.filter(a =>
+    ['fireball', 'lightning', 'earth_wall', 'ward'].indexOf(a.id) >= 0);
+  const alphaRight = alphaFour.filter(a => a.correct).length;
+
+  const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+  const delayMin = saved && saved.studiedAt
+    ? Math.round((Date.now() - saved.studiedAt) / 60000) : null;
+
+  const tb = $('report').querySelector('tbody');
+  tb.innerHTML = '';
+  for (const a of answers) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + a.name + '</td>' +
+      '<td style="color:' + (a.correct ? css('--good') : css('--bad')) + '">' +
+        (a.correct ? 'recalled' : (a.skipped ? 'blank' : 'wrong')) + '</td>' +
+      '<td style="font-family:var(--mono)">' + a.drawn + '</td>' +
+      '<td style="font-family:var(--mono);color:var(--text-dim)">' + a.expected + '</td>' +
+      '<td style="font-family:var(--mono)">' + (a.dist === null ? '—' : a.dist) + '</td>';
+    tb.appendChild(tr);
+  }
+
+  const passed = right >= 4;
+  const v = $('verdict');
+  v.className = 'banner ' + (passed ? 'pass' : 'fail');
+  v.innerHTML =
+    '<strong>' + right + ' of ' + total + ' recalled</strong>' +
+    (delayMin !== null ? ' after ' + delayMin + ' minutes' : ' (no saved study time)') +
+    '. Alpha four: ' + alphaRight + '/4.<br>' +
+    (passed
+      ? 'Sigils stick. The grimoire can be a menu the player consults occasionally, ' +
+        'and 7.1 stays a 1h task. If the two beta candidates also came back, the ' +
+        'dictionary has room to grow past four spells.'
+      : 'Sigils do not stick. <strong>Promote the grimoire to permanent HUD hints</strong> ' +
+        '(7.1 grows), and treat pattern count as a hard design budget rather than ' +
+        'something to expand at beta. Better to learn this now than at 8.4.');
+}
+
+function refreshResume() {
+  const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+  const el = $('resume');
+  if (!saved || !saved.studiedAt) { el.style.display = 'none'; return; }
+  const mins = Math.round((Date.now() - saved.studiedAt) / 60000);
+  el.style.display = '';
+  el.innerHTML = 'Saved study session from <strong>' + mins + ' minutes ago</strong>. ' +
+    (mins >= 55
+      ? 'That is a real delay — press <strong>Skip to test</strong> now for a valid reading.'
+      : 'Come back at 60 minutes; testing sooner measures short-term memory instead.');
+}
+
+/* ---------- controls ---------- */
+
+$('btnStudy').onclick = startStudy;
+$('btnTestNow').onclick = startTest;
+$('btnAgain').onclick = () => { show('intro'); refreshResume(); };
+$('btnPrint').onclick = () => window.print();
+$('btnDunno').onclick = () => { if (phase === 'test') submit(true); };
+$('btnClearDraw').onclick = () => { path = []; edges = new Set(); draw(); };
+$('btnClear').onclick = () => { localStorage.removeItem(KEY); refreshResume(); };
+$('btnCsv').onclick = () => {
+  if (!answers.length) return;
+  const head = 'sigil,result,drawn_signature,expected_signature,edit_distance';
+  const rows = answers.map(a => [a.id,
+    a.correct ? 'recalled' : (a.skipped ? 'blank' : 'wrong'),
+    a.drawn, a.expected, a.dist === null ? '' : a.dist].join(','));
+  const blob = new Blob([head + '\n' + rows.join('\n')], { type: 'text/csv' });
+  const el = document.createElement('a');
+  el.href = URL.createObjectURL(blob);
+  el.download = 'memory_spike.csv';
+  el.click();
+};
+
+window.addEventListener('resize', () => {
+  if (phase !== 'test') return;
+  const nw = cv.parentElement.clientWidth - 20;
+  if (Math.abs(nw - W) < 2) return;
+  buildGrid(); draw();
+});
+
+fillGrid($('introGrid'));
+refreshResume();
+show('intro');
+
+// Guard: if anyone edits STUDY_SET, say so loudly rather than silently
+// running a test whose patterns are one slip apart.
+(function checkSeparation() {
+  const m = G.separationMatrix(STUDY_SET);
+  if (m.minDist < 2) {
+    const w = document.createElement('div');
+    w.className = 'banner fail noprint';
+    w.style.marginBottom = '12px';
+    w.innerHTML = '<strong>Study set is unsafe:</strong> minimum separation ' +
+      m.minDist + '. Two sigils are within one mis-stepped edge of each other. ' +
+      'Re-pick with <code>find_pattern.js</code>.';
+    $('screenIntro').prepend(w);
+  }
+})();
+</script>
+</body>
+</html>

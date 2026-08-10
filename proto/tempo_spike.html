@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>P1 — Tempo spike</title>
+<style>
+  :root {
+    --bg: #14140f; --surface: #1e1e18; --surface-2: #26261e;
+    --text: #e8e6dd; --text-dim: #8d8b80; --border: #35342b;
+    --accent: #d4a017; --good: #4ea172; --bad: #c25a44;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, sans-serif; background: var(--bg); color: var(--text);
+    margin: 0; padding: 24px; min-height: 100vh;
+  }
+  h1 { font-size: 17px; font-weight: 600; margin: 0 0 8px; letter-spacing: .01em;
+       text-align: center; }
+  .sub { font-size: 13px; color: var(--text-dim); max-width: 640px; text-align: center;
+         margin: 0 auto 16px; line-height: 1.5; }
+  /* Sized by the viewport, never by content — the canvas is width:100%, so a
+     shrink-to-fit ancestor would collapse it to nothing. */
+  .wrap { width: 100%; max-width: 860px; margin: 0 auto; }
+  .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  button {
+    padding: 7px 14px; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--surface); color: var(--text); cursor: pointer;
+    font-size: 13px; font-family: inherit;
+  }
+  button:hover:not(:disabled) { background: var(--surface-2); border-color: #4a483c; }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: var(--accent); color: #14140f; border-color: var(--accent); font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: #e5b02a; }
+  label { font-size: 12px; color: var(--text-dim); }
+  select, input[type=number] {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 7px; font-size: 12px; font-family: inherit;
+  }
+  .stage {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 10px; position: relative;
+  }
+  canvas { width: 100%; display: block; touch-action: none; cursor: crosshair; border-radius: 8px; }
+  .hud {
+    position: absolute; top: 18px; left: 18px; right: 18px;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    pointer-events: none; gap: 12px;
+  }
+  .ref {
+    background: rgba(20,20,15,.85); border: 1px solid var(--border); border-radius: 9px;
+    padding: 8px 10px; text-align: center; backdrop-filter: blur(3px);
+  }
+  .ref .name { font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+                letter-spacing: .09em; margin-bottom: 4px; }
+  .clock { font-family: var(--mono); font-size: 26px; font-variant-numeric: tabular-nums; }
+  .verdict { font-size: 13px; font-family: var(--mono); min-height: 18px; text-align: right; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+           gap: 8px; margin-top: 12px; }
+  .stat { background: var(--surface); border: 1px solid var(--border);
+          border-radius: 9px; padding: 9px 11px; }
+  .stat .k { font-size: 10px; color: var(--text-dim); text-transform: uppercase;
+             letter-spacing: .08em; }
+  .stat .v { font-size: 19px; font-family: var(--mono); font-variant-numeric: tabular-nums;
+             margin-top: 3px; }
+  .gate { margin-top: 12px; padding: 11px 14px; border-radius: 9px; font-size: 13px;
+          border: 1px solid var(--border); background: var(--surface); line-height: 1.5; }
+  .gate.pass { border-color: var(--good); }
+  .gate.fail { border-color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px;
+          font-family: var(--mono); margin-top: 12px; }
+  th, td { text-align: right; padding: 4px 7px; border-bottom: 1px solid var(--border); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--text-dim); font-weight: 500; font-size: 11px;
+       text-transform: uppercase; letter-spacing: .06em; }
+  .scroll { max-height: 210px; overflow-y: auto; }
+</style>
+</head>
+<body>
+
+<h1>P1 — Tempo spike</h1>
+<p class="sub">
+  Trace the shown pattern as fast as you can. The clock starts when the target
+  appears, not when you touch the grid — recall time is part of the cast.
+  <strong>The median total here becomes the combat tempo constant (3.2.6)</strong>,
+  which every enemy speed, aggro radius and attack windup is derived from.
+</p>
+
+<div class="wrap">
+  <div class="bar">
+    <button id="start" class="primary">Start run</button>
+    <button id="abort" disabled>Abort</button>
+    <label for="pat">Pattern</label>
+    <select id="pat"><option value="*">all, shuffled</option></select>
+    <label for="trials">Trials</label>
+    <input type="number" id="trials" value="20" min="4" max="200" style="width:62px">
+    <label for="spacing">Spacing</label>
+    <input type="number" id="spacing" value="46" min="24" max="90" step="2" style="width:62px">
+    <label style="display:flex;align-items:center;gap:5px;">
+      <input type="checkbox" id="hideref"> hide reference while drawing
+    </label>
+    <button id="csv" style="margin-left:auto">Export CSV</button>
+    <button id="reset">Reset</button>
+  </div>
+
+  <div class="stage">
+    <canvas id="cv"></canvas>
+    <div class="hud">
+      <div class="ref" id="refBox" style="visibility:hidden">
+        <div class="name" id="refName">—</div>
+        <canvas id="refCv" width="108" height="108"
+                style="width:54px;height:54px;background:none"></canvas>
+      </div>
+      <div style="text-align:right">
+        <div class="clock" id="clock">—</div>
+        <div class="verdict" id="verdict"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="k">trial</div><div class="v" id="sTrial">0/0</div></div>
+    <div class="stat"><div class="k">hit rate</div><div class="v" id="sHit">—</div></div>
+    <div class="stat"><div class="k">median total</div><div class="v" id="sMed">—</div></div>
+    <div class="stat"><div class="k">p90 total</div><div class="v" id="sP90">—</div></div>
+    <div class="stat"><div class="k">median recall</div><div class="v" id="sRec">—</div></div>
+    <div class="stat"><div class="k">median trace</div><div class="v" id="sDraw">—</div></div>
+    <div class="stat"><div class="k">fumbles/cast</div><div class="v" id="sFum">—</div></div>
+  </div>
+
+  <div class="gate" id="gate">
+    Go/no-go: <strong>median total &le; 2.0s and p90 &le; 3.5s</strong>. Miss it and turn
+    the dials — coarser grid, larger snap radius, shorter patterns — then re-run.
+    Do not proceed to production until this passes or the patterns change.
+  </div>
+
+  <div class="scroll"><table id="log">
+    <thead><tr><th>#</th><th>pattern</th><th>result</th><th>recall</th>
+      <th>trace</th><th>total</th><th>edges</th><th>fumbles</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+</div>
+
+<script src="glyph_core.js"></script>
+<script>
+const G = GlyphCore;
+
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const refCv = document.getElementById('refCv'), refCtx = refCv.getContext('2d');
+const $ = id => document.getElementById(id);
+
+let S = 46;                 // lattice spacing, px
+let W = 0, H = 420;
+let dpr = window.devicePixelRatio || 1;
+let points = [];            // [{q, r, x, y}]
+let index = new Map();      // "q,r" -> point
+
+// run state
+let running = false, queue = [], trialNo = 0, totalTrials = 0;
+let target = null;          // current pattern
+let shownAt = 0, firstTouchAt = 0;
+let path = [], edges = new Set(), wasted = 0, lastReject = null;
+let drawing = false, cursor = null, results = [];
+
+/* ---------- lattice ---------- */
+
+function buildGrid() {
+  W = cv.parentElement.clientWidth - 20;
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  points = []; index = new Map();
+  const pad = 26;
+  const rowH = S * G.SQRT3_2;
+  const rows = Math.floor((H - pad * 2) / rowH);
+  for (let r = 0; r <= rows; r++) {
+    const qMin = Math.ceil((pad - (W / 2)) / S - r / 2) - 1;
+    const qMax = Math.floor((W - pad - (W / 2)) / S - r / 2) + 1;
+    for (let q = qMin; q <= qMax; q++) {
+      const p = G.axialToPixel(q, r, S);
+      const x = p.x + W / 2, y = p.y + pad;
+      if (x < pad || x > W - pad || y < pad || y > H - pad) continue;
+      const pt = { q, r, x, y };
+      points.push(pt);
+      index.set(q + ',' + r, pt);
+    }
+  }
+}
+
+function nearestPoint(x, y, radius) {
+  let best = null, bd = radius * radius;
+  for (const p of points) {
+    const dx = p.x - x, dy = p.y - y, d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+
+const edgeKey = (a, b) => {
+  const ka = a.q + ',' + a.r, kb = b.q + ',' + b.r;
+  return ka < kb ? ka + '|' + kb : kb + '|' + ka;
+};
+
+/* ---------- rendering ---------- */
+
+function glyphPath(dirs) {
+  const pts = [{ q: 0, r: 0 }];
+  let q = 0, r = 0;
+  for (const d of dirs) {
+    q += G.DIRS[d][0]; r += G.DIRS[d][1];
+    pts.push({ q, r });
+  }
+  return pts;
+}
+
+// Draw a pattern centred in a box — used for the reference thumbnail.
+function renderGlyph(c, dirs, w, h, color, lw) {
+  c.clearRect(0, 0, w, h);
+  const pts = glyphPath(dirs).map(p => G.axialToPixel(p.q, p.r, 1));
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const pad = lw * 2 + 4;
+  const sc = Math.min((w - pad * 2) / Math.max(x1 - x0, .001),
+                      (h - pad * 2) / Math.max(y1 - y0, .001));
+  const ox = (w - (x1 - x0) * sc) / 2 - x0 * sc;
+  const oy = (h - (y1 - y0) * sc) / 2 - y0 * sc;
+  c.beginPath();
+  pts.forEach((p, i) => {
+    const X = p.x * sc + ox, Y = p.y * sc + oy;
+    i ? c.lineTo(X, Y) : c.moveTo(X, Y);
+  });
+  c.strokeStyle = color; c.lineWidth = lw;
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  c.stroke();
+  // mark the start so a reader knows where to begin
+  c.beginPath();
+  c.arc(pts[0].x * sc + ox, pts[0].y * sc + oy, lw * 1.3, 0, 7);
+  c.fillStyle = color; c.fill();
+}
+
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  const used = new Set(path.map(p => p.q + ',' + p.r));
+
+  for (const p of points) {
+    const on = used.has(p.q + ',' + p.r);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, on ? 4 : 2, 0, 7);
+    ctx.fillStyle = on ? css('--accent') : css('--border');
+    ctx.fill();
+  }
+
+  if (path.length > 1) {
+    ctx.beginPath();
+    ctx.moveTo(path[0].x, path[0].y);
+    for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+    ctx.strokeStyle = css('--accent');
+    ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+  if (drawing && cursor && path.length) {
+    const last = path[path.length - 1];
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y); ctx.lineTo(cursor.x, cursor.y);
+    ctx.strokeStyle = css('--accent'); ctx.globalAlpha = .3;
+    ctx.setLineDash([4, 5]); ctx.lineWidth = 2; ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+  }
+}
+
+/* ---------- run loop ---------- */
+
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function startRun() {
+  const sel = $('pat').value;
+  totalTrials = Math.max(4, Math.min(200, +$('trials').value || 20));
+  const pool = sel === '*' ? G.ALPHA_PATTERNS : G.ALPHA_PATTERNS.filter(p => p.id === sel);
+  queue = [];
+  while (queue.length < totalTrials) queue.push(...shuffle(pool.slice()));
+  queue = queue.slice(0, totalTrials);
+  trialNo = 0; running = true;
+  $('start').disabled = true; $('abort').disabled = false;
+  nextTrial();
+}
+
+function nextTrial() {
+  if (!running || trialNo >= totalTrials) return endRun();
+  target = queue[trialNo];
+  trialNo++;
+  path = []; edges = new Set(); wasted = 0; lastReject = null;
+  firstTouchAt = 0; drawing = false; cursor = null;
+  $('refName').textContent = target.name;
+  renderGlyph(refCtx, target.dirs, 108, 108, css('--accent'), 7);
+  $('refBox').style.visibility = 'visible';
+  $('verdict').textContent = '';
+  $('sTrial').textContent = trialNo + '/' + totalTrials;
+  shownAt = performance.now();
+  draw();
+}
+
+function endRun() {
+  running = false; target = null;
+  $('start').disabled = false; $('abort').disabled = true;
+  $('refBox').style.visibility = 'hidden';
+  $('clock').textContent = '—';
+  $('verdict').textContent = results.length ? 'run complete' : '';
+  draw();
+}
+
+function commit() {
+  if (!target) return;
+  const now = performance.now();
+  const dirs = G.pathToDirs(path.map(p => ({ q: p.q, r: p.r })));
+  const sig = dirs ? G.signature(dirs) : '';
+  const want = G.signature(target.dirs);
+  const hit = sig === want;
+
+  const rec = {
+    n: results.length + 1,
+    pattern: target.id,
+    hit: hit,
+    recallMs: Math.round(firstTouchAt - shownAt),
+    traceMs: Math.round(now - (firstTouchAt || now)),
+    totalMs: Math.round(now - shownAt),
+    edges: dirs ? dirs.length : 0,
+    wasted: wasted,
+    drawn: sig,
+  };
+  results.push(rec);
+  logRow(rec);
+  refreshStats();
+
+  $('verdict').innerHTML = hit
+    ? '<span style="color:' + css('--good') + '">hit &middot; ' + (rec.totalMs / 1000).toFixed(2) + 's</span>'
+    : '<span style="color:' + css('--bad') + '">miss</span>';
+
+  setTimeout(() => { if (running) nextTrial(); }, hit ? 320 : 750);
+  target = null;
+}
+
+/* ---------- input ---------- */
+
+function localPos(e) {
+  const r = cv.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+cv.addEventListener('pointerdown', e => {
+  if (!running || !target) return;
+  cv.setPointerCapture(e.pointerId);
+  const p = localPos(e);
+  const pt = nearestPoint(p.x, p.y, S * 0.55);
+  if (!pt) return;
+  if (!firstTouchAt) firstTouchAt = performance.now();
+  drawing = true;
+  path = [pt]; edges = new Set(); cursor = p;
+  if ($('hideref').checked) $('refBox').style.visibility = 'hidden';
+  draw();
+});
+
+cv.addEventListener('pointermove', e => {
+  if (!drawing) return;
+  cursor = localPos(e);
+  const pt = nearestPoint(cursor.x, cursor.y, S * 0.45);
+  const last = path[path.length - 1];
+  if (pt && pt !== last) {
+    const adj = G.dirBetween(last.q, last.r, pt.q, pt.r) >= 0;
+    if (adj) {
+      // Backtracking onto the previous point erases — same rule as the
+      // original prototype. It counts as a fumble either way.
+      if (path.length > 1 && pt === path[path.length - 2]) {
+        edges.delete(edgeKey(last, pt));
+        path.pop(); wasted++; lastReject = null;
+      } else {
+        const k = edgeKey(last, pt);
+        if (!edges.has(k)) {
+          edges.add(k); path.push(pt); lastReject = null;
+        } else if (lastReject !== k) {
+          wasted++; lastReject = k;   // debounced: one fumble per attempt
+        }
+      }
+    }
+  }
+  draw();
+});
+
+function release() {
+  if (!drawing) return;
+  drawing = false; cursor = null;
+  commit();
+  draw();
+}
+cv.addEventListener('pointerup', release);
+cv.addEventListener('pointercancel', release);
+
+/* ---------- stats ---------- */
+
+function pct(arr, p) {
+  if (!arr.length) return null;
+  const s = arr.slice().sort((a, b) => a - b);
+  const i = Math.min(s.length - 1, Math.max(0, Math.ceil(p * s.length) - 1));
+  return s[i];
+}
+const fmt = ms => ms == null ? '—' : (ms / 1000).toFixed(2) + 's';
+
+function refreshStats() {
+  const hits = results.filter(r => r.hit);
+  $('sHit').textContent = results.length
+    ? Math.round(hits.length / results.length * 100) + '%' : '—';
+  const totals = hits.map(r => r.totalMs);
+  const med = pct(totals, .5), p90 = pct(totals, .9);
+  $('sMed').textContent = fmt(med);
+  $('sP90').textContent = fmt(p90);
+  $('sRec').textContent = fmt(pct(hits.map(r => r.recallMs), .5));
+  $('sDraw').textContent = fmt(pct(hits.map(r => r.traceMs), .5));
+  $('sFum').textContent = hits.length
+    ? (hits.reduce((s, r) => s + r.wasted, 0) / hits.length).toFixed(2) : '—';
+
+  const gate = $('gate');
+  if (hits.length < 8) {
+    gate.className = 'gate';
+    gate.innerHTML = 'Go/no-go: <strong>median total &le; 2.0s and p90 &le; 3.5s</strong>. ' +
+      'Need at least 8 hits for a reading — ' + hits.length + ' so far.';
+  } else {
+    const okMed = med <= 2000, okP90 = p90 <= 3500;
+    gate.className = 'gate ' + (okMed && okP90 ? 'pass' : 'fail');
+    gate.innerHTML = (okMed && okP90)
+      ? '<strong>PASS.</strong> Median ' + fmt(med) + ', p90 ' + fmt(p90) +
+        '. Write median into the tempo constant (3.2.6) and derive enemy speed, ' +
+        'aggro radius and windup from it.'
+      : '<strong>NO-GO.</strong> Median ' + fmt(med) + ' (want &le;2.00s), p90 ' +
+        fmt(p90) + ' (want &le;3.50s). Turn a dial — coarser grid, larger snap ' +
+        'radius, or shorter patterns — and re-run before building anything.';
+  }
+}
+
+function logRow(r) {
+  const tb = $('log').querySelector('tbody');
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td>' + r.n + '</td><td>' + r.pattern + '</td>' +
+    '<td style="color:' + (r.hit ? css('--good') : css('--bad')) + '">' +
+      (r.hit ? 'hit' : 'miss') + '</td>' +
+    '<td>' + fmt(r.recallMs) + '</td><td>' + fmt(r.traceMs) + '</td>' +
+    '<td>' + fmt(r.totalMs) + '</td><td>' + r.edges + '</td><td>' + r.wasted + '</td>';
+  tb.insertBefore(tr, tb.firstChild);
+}
+
+/* ---------- controls ---------- */
+
+$('start').onclick = startRun;
+$('abort').onclick = endRun;
+$('reset').onclick = () => {
+  results = []; $('log').querySelector('tbody').innerHTML = '';
+  $('sTrial').textContent = '0/0';
+  refreshStats(); endRun();
+};
+$('spacing').onchange = () => { S = +$('spacing').value; buildGrid(); draw(); };
+$('csv').onclick = () => {
+  if (!results.length) return;
+  const head = 'trial,pattern,hit,recall_ms,trace_ms,total_ms,edges,fumbles,drawn_signature';
+  const rows = results.map(r => [r.n, r.pattern, r.hit ? 1 : 0, r.recallMs,
+    r.traceMs, r.totalMs, r.edges, r.wasted, r.drawn].join(','));
+  const blob = new Blob([head + '\n' + rows.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'tempo_spike_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.csv';
+  a.click();
+};
+
+// live clock
+(function tick() {
+  if (running && target) {
+    $('clock').textContent = ((performance.now() - shownAt) / 1000).toFixed(2) + 's';
+  }
+  requestAnimationFrame(tick);
+})();
+
+for (const p of G.ALPHA_PATTERNS) {
+  const o = document.createElement('option');
+  o.value = p.id; o.textContent = p.name + '  (' + p.dirs.length + ' edges)';
+  $('pat').appendChild(o);
+}
+
+window.addEventListener('resize', () => {
+  const nw = cv.parentElement.clientWidth - 20;
+  if (Math.abs(nw - W) < 2) return;
+  buildGrid(); draw();
+});
+
+buildGrid(); draw(); refreshStats();
+</script>
+</body>
+</html>
