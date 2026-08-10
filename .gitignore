@@ -38,3 +38,12 @@ desktop.ini
 .idea/
 .vscode/
 node_modules/
+
+# Python virtual environment
+.venv/
+venv/
+__pycache__/
+
+# spells images for training
+dataset/
+dataset_prep/
