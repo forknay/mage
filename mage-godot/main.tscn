@@ -72,3 +72,6 @@ data = {
 
 [node name="enemy" parent="." unique_id=1277468497 instance=ExtResource("4_1bvp3")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.569114, 0.0049848557, 4.5696106)
+
+[node name="enemy2" parent="." unique_id=898531408 instance=ExtResource("4_1bvp3")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20.240627, 0.0049848557, 5.4798374)

@@ -20,6 +20,9 @@ signal player_lost
 @export var contact_distance := 1.2
 ## Colour shown while in contact with the player.
 @export var contact_color := Color(0.9, 0.75, 0.2)
+## Layers the sight ray tests against. Deliberately excludes the enemy layer so
+## that enemies never block each other's view of the player.
+@export_flags_3d_physics var sight_mask := 1 | 2
 
 @onready var nav_agent: NavigationAgent3D = $NavigationAgent3D
 @onready var mesh: MeshInstance3D = $MeshInstance3D
@@ -47,9 +50,6 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if not is_on_floor():
-		velocity += get_gravity() * delta
-
 	if can_see_player():
 		time_since_seen = 0.0
 		# Only refreshed while visible, so losing sight sends the enemy to the
@@ -58,18 +58,34 @@ func _physics_process(delta: float) -> void:
 	else:
 		time_since_seen += delta
 
+	# Vertical velocity is passed through untouched; avoidance steers x and z.
+	var desired := Vector3(0.0, velocity.y, 0.0)
+
 	if time_since_seen < memory_time and not nav_agent.is_navigation_finished():
 		var next_location := nav_agent.get_next_path_position()
 		var direction := next_location - global_position
 		direction.y = 0.0
 		direction = direction.normalized()
-		velocity.x = direction.x * speed
-		velocity.z = direction.z * speed
+		desired.x = direction.x * speed
+		desired.z = direction.z * speed
 		face_direction(direction, delta)
-	else:
-		velocity.x = 0.0
-		velocity.z = 0.0
 
+	if nav_agent.avoidance_enabled:
+		# Hand the intended velocity to the avoidance solver. It answers on
+		# velocity_computed, and the actual movement happens there. Submitted
+		# even when standing still, so other agents still steer around this one.
+		nav_agent.velocity = desired
+	else:
+		velocity = desired
+		move_and_slide()
+		update_contact()
+
+
+func _on_navigation_agent_3d_velocity_computed(safe_velocity: Vector3) -> void:
+	# Only the horizontal result is taken; gravity stays under our control so
+	# the solver cannot lift the enemy off the floor.
+	velocity.x = safe_velocity.x
+	velocity.z = safe_velocity.z
 	move_and_slide()
 	update_contact()
 
@@ -122,9 +138,11 @@ func can_see_player() -> bool:
 	if flat_forward.angle_to(flat_to_player) > deg_to_rad(sight_angle) / 2.0:
 		return false
 
-	# Anything solid in between blocks the view, including other enemies.
-	var query := PhysicsRayQueryParameters3D.create(eye, player.global_position)
-	query.exclude = [get_rid()]
+	# Only world geometry can block the view. Self is excluded as well, in case
+	# the enemy layer is ever added back into sight_mask.
+	var query := PhysicsRayQueryParameters3D.create(
+		eye, player.global_position, sight_mask, [get_rid()]
+	)
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	return not hit.is_empty() and hit.collider == player
 
