@@ -82,8 +82,8 @@ Keep this list short. Every autoload is global state.
 | `move_forward` / `_back` / `_left` / `_right` | W A S D | |
 | `jump` | Space | |
 | `interact` | E | Raycast interactor (1.3.1) |
-| `cast` | Right mouse, **hold** | Opens the draw overlay; release commits the glyph |
-| `fire` | Left mouse | Releases a charged spell at current aim (3.1.6) |
+| `draw` | Left mouse, **hold** | Opens the draw overlay and draws one stroke per hold; the overlay stays open between strokes |
+| `cast` | Right mouse | Commits every stroke drawn so far and fires the result |
 | `grimoire` | Tab, hold | Pattern reference (7.1) |
 | `pause` | Escape | **See the Escape rule below** |
 

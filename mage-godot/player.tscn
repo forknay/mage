@@ -1,6 +1,7 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://player.gd" id="1_player"]
+[ext_resource type="PackedScene" path="res://scenes/player/spell_caster.tscn" id="2_caster"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.4
@@ -25,3 +26,9 @@ mesh = SubResource("CapsuleMesh_1")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 0)
 
 [node name="Camera3D" type="Camera3D" parent="Head"]
+
+[node name="SpellCaster" parent="." node_paths=PackedStringArray("camera") instance=ExtResource("2_caster")]
+camera = NodePath("../Head/Camera3D")
+
+[connection signal="draw_ended" from="SpellCaster" to="." method="_on_draw_ended"]
+[connection signal="draw_started" from="SpellCaster" to="." method="_on_draw_started"]

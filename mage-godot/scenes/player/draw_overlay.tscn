@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scenes/player/draw_overlay.gd" id="1_overlay"]
+
+[node name="DrawOverlay" type="MeshInstance3D"]
+top_level = true
+cast_shadow = 0
+script = ExtResource("1_overlay")

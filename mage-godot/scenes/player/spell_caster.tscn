@@ -1,0 +1,11 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scenes/player/spell_caster.gd" id="1_caster"]
+[ext_resource type="PackedScene" path="res://scenes/player/draw_overlay.tscn" id="2_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/spells/spell_projectile.tscn" id="3_bolt"]
+
+[node name="SpellCaster" type="Node3D"]
+script = ExtResource("1_caster")
+projectile_scene = ExtResource("3_bolt")
+
+[node name="DrawOverlay" parent="." instance=ExtResource("2_overlay")]
