@@ -1,10 +1,10 @@
 """
 Template Persistence for the $Q Recognizer
 ===========================================
-Each template lives as its OWN JSON file (RAW, unprocessed strokes -- not
-the normalized point-cloud and not the LUT) inside a shared templates
-directory (default: templates/). Every record also carries an optional
-`image_path` pointing at a PNG snapshot of the canvas at capture time.
+Each template lives as its OWN JSON file (RAW, unprocessed points -- not the
+normalized point-cloud and not the LUT) inside a shared templates directory
+(default: templates/). Every record also carries an optional `image_path`
+pointing at a PNG snapshot of the canvas at capture time.
 
 templates/circle.json:
 {
@@ -12,19 +12,11 @@ templates/circle.json:
   "level": 1,
   "min_score": 0.6,
   "image_path": "template_images/circle.png",
-  "strokes": [
-    {"points": [{"x": 12.3, "y": 45.6}, {"x": 12.8, "y": 46.1}, ...]}
-  ]
+  "points": [{"x": 12.3, "y": 45.6, "stroke_id": 0}, ...]
 }
 
-Strokes are stored as a list of point-lists (one entry per physically
-separate pen-stroke) rather than a flat point list tagged with a
-stroke_id -- Point carries no stroke identity of its own (see
-gesture_types.py), so "which points belong together" is expressed by JSON
-nesting instead of a repeated `stroke_id` field on every point.
-
 Layout of this file:
-  1. (De)serialization helpers -- Point/Stroke <-> dict, name -> file path
+  1. (De)serialization helpers -- Point <-> dict, name -> file path
   2. File I/O                  -- load/save individual template records
   3. Template cache            -- OPTIMIZATION FIX #4, see config.py's
                                    "Template cache" section for the design
@@ -38,7 +30,7 @@ import os
 import re
 from typing import TYPE_CHECKING, Dict, List, Optional
 
-from gesture_types import Point, Stroke
+from merge_intersecting_strokes import Point
 from config import (
     DEFAULT_TEMPLATES_DIR,
     DEFAULT_TEMPLATE_IMAGES_DIR,
@@ -56,41 +48,11 @@ if TYPE_CHECKING:
 # =============================================================================
 
 def _point_to_dict(p: Point) -> dict:
-    return {"x": p.x, "y": p.y}
+    return {"x": p.x, "y": p.y, "stroke_id": p.stroke_id}
 
 
 def _dict_to_point(d: dict) -> Point:
-    return Point(float(d["x"]), float(d["y"]))
-
-
-def _stroke_to_dict(s: Stroke) -> dict:
-    return {"points": [_point_to_dict(p) for p in s.points]}
-
-
-def _dict_to_stroke(d: dict) -> Stroke:
-    return Stroke(points=[_dict_to_point(p) for p in d["points"]])
-
-
-def _legacy_points_to_strokes(points: List[dict]) -> List[Stroke]:
-    """Convert legacy point-based template records into stroke objects."""
-    strokes_by_id: Dict[int, List[Point]] = {}
-    stroke_order: List[int] = []
-    for point in points:
-        stroke_id = int(point.get("stroke_id", 0))
-        if stroke_id not in strokes_by_id:
-            strokes_by_id[stroke_id] = []
-            stroke_order.append(stroke_id)
-        strokes_by_id[stroke_id].append(_dict_to_point(point))
-
-    return [Stroke(points=strokes_by_id[stroke_id]) for stroke_id in stroke_order]
-
-
-def _record_to_strokes(record: dict) -> List[Stroke]:
-    if "strokes" in record:
-        return [_dict_to_stroke(d) for d in record["strokes"]]
-    if "points" in record:
-        return _legacy_points_to_strokes(record["points"])
-    raise KeyError("Template record must contain either 'strokes' or 'points'.")
+    return Point(float(d["x"]), float(d["y"]), int(d.get("stroke_id", 0)))
 
 
 def slugify(name: str) -> str:
@@ -134,7 +96,7 @@ def save_template_record(record: dict, templates_dir: str = DEFAULT_TEMPLATES_DI
 def append_template(
     name: str,
     level: int,
-    strokes: List[Stroke],
+    points: List[Point],
     image_path: Optional[str] = None,
     min_score: Optional[float] = None,
     templates_dir: str = DEFAULT_TEMPLATES_DIR,
@@ -154,7 +116,7 @@ def append_template(
         "name": name,
         "level": level,
         "image_path": image_path,
-        "strokes": [_stroke_to_dict(s) for s in strokes],
+        "points": [_point_to_dict(p) for p in points],
     }
     if min_score is not None:
         record["min_score"] = min_score
@@ -166,7 +128,7 @@ def append_template(
 # =============================================================================
 # See config.py's "Template cache" section for the design rationale. In
 # short: each cache entry stores a template's already-preprocessed points +
-# LUT, tagged with two fingerprints (of the raw strokes+level, and of the
+# LUT, tagged with two fingerprints (of the raw points+level, and of the
 # QRecognizer settings that affect preprocessing). A load only reuses a
 # cache entry if BOTH fingerprints still match; otherwise it's treated as a
 # miss and the template is recomputed (and the cache rewritten) normally.
@@ -183,13 +145,13 @@ def _stable_hash(payload: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _template_strokes_signature(strokes: List[Stroke], level: int) -> str:
+def _template_points_signature(points: List[Point], level: int) -> str:
     """
-    Fingerprint of a template's raw (unprocessed) strokes + level -- the
+    Fingerprint of a template's raw (unprocessed) points + level -- the
     cache-key half that changes whenever the template itself is edited or
     re-captured under the same name.
     """
-    return _stable_hash({"level": level, "strokes": [_stroke_to_dict(s) for s in strokes]})
+    return _stable_hash({"level": level, "points": [_point_to_dict(p) for p in points]})
 
 
 def _recognizer_signature(rec: "QRecognizer") -> str:
@@ -212,7 +174,7 @@ def _cache_path(name: str, cache_dir: str) -> str:
     return os.path.join(cache_dir, f"{slugify(name)}.json")
 
 
-def _load_cache_entry(name: str, cache_dir: str, strokes_sig: str, config_sig: str) -> Optional[dict]:
+def _load_cache_entry(name: str, cache_dir: str, points_sig: str, config_sig: str) -> Optional[dict]:
     """
     Returns the cached {points, lut, level, aspect_ratio} for `name` if a
     cache file exists AND both its stored fingerprints still match the ones
@@ -226,8 +188,8 @@ def _load_cache_entry(name: str, cache_dir: str, strokes_sig: str, config_sig: s
     try:
         with open(path, "r") as f:
             entry = json.load(f)
-        if entry.get("strokes_sig") != strokes_sig or entry.get("config_sig") != config_sig:
-            return None  # Strokes were edited or QRecognizer settings changed -- stale, recompute.
+        if entry.get("points_sig") != points_sig or entry.get("config_sig") != config_sig:
+            return None  # Points were edited or QRecognizer settings changed -- stale, recompute.
         return {
             "points": [_dict_to_point(d) for d in entry["points"]],
             "lut": entry["lut"],
@@ -238,7 +200,7 @@ def _load_cache_entry(name: str, cache_dir: str, strokes_sig: str, config_sig: s
         return None
 
 
-def _write_cache_entry(name: str, cache_dir: str, strokes_sig: str, config_sig: str, template) -> None:
+def _write_cache_entry(name: str, cache_dir: str, points_sig: str, config_sig: str, template) -> None:
     """
     Writes `template`'s already-preprocessed points + LUT out to the cache,
     tagged with the two fingerprints that must both still match for a
@@ -248,16 +210,13 @@ def _write_cache_entry(name: str, cache_dir: str, strokes_sig: str, config_sig: 
     add_template` just appended -- accessed only via `.points`/`.xs`/`.ys`/
     `.lut`/`.level`/`.aspect_ratio` (duck-typed rather than imported, so
     this module keeps its existing TYPE_CHECKING-only dependency on
-    recognizer.py instead of gaining a real one). `template.points` here is
-    already the flat, post-preprocessing point cloud -- preprocessing
-    resamples strokes down into one continuous run, so there's no stroke
-    structure left to preserve at this stage.
+    recognizer.py instead of gaining a real one).
     """
     try:
         os.makedirs(cache_dir, exist_ok=True)
         lut = template.lut.tolist() if hasattr(template.lut, "tolist") else template.lut
         entry = {
-            "strokes_sig": strokes_sig,
+            "points_sig": points_sig,
             "config_sig": config_sig,
             "level": template.level,
             "aspect_ratio": template.aspect_ratio,
@@ -285,7 +244,7 @@ def apply_records(rec: "QRecognizer", records: List[dict],
     see the "Template cache" section above -- and if found, registers it
     via the fast `add_precomputed_template` path instead of recomputing
     preprocessing + the LUT from scratch. A cache miss (first load, edited
-    strokes, or changed QRecognizer settings) falls back to the normal
+    points, or changed QRecognizer settings) falls back to the normal
     `add_template` path and writes a fresh cache entry for next time.
     Passing `cache_dir=None` (the default) skips the cache entirely and
     always does a full recompute, matching the original behavior exactly.
@@ -295,11 +254,11 @@ def apply_records(rec: "QRecognizer", records: List[dict],
     for r in records:
         level = r["level"]
         min_score = r.get("min_score", DEFAULT_MIN_SCORE)
-        strokes = _record_to_strokes(r)
+        points = [_dict_to_point(d) for d in r["points"]]
 
         if cache_dir:
-            strokes_sig = _template_strokes_signature(strokes, level)
-            cached = _load_cache_entry(r["name"], cache_dir, strokes_sig, config_sig)
+            points_sig = _template_points_signature(points, level)
+            cached = _load_cache_entry(r["name"], cache_dir, points_sig, config_sig)
             if cached is not None:
                 rec.add_precomputed_template(
                     r["name"], cached["points"], cached["lut"],
@@ -307,10 +266,10 @@ def apply_records(rec: "QRecognizer", records: List[dict],
                 )
                 continue
 
-        rec.add_template(r["name"], strokes, level=level, min_score=min_score)
+        rec.add_template(r["name"], points, level=level, min_score=min_score)
 
         if cache_dir:
-            _write_cache_entry(r["name"], cache_dir, strokes_sig, config_sig, rec.templates[-1])
+            _write_cache_entry(r["name"], cache_dir, points_sig, config_sig, rec.templates[-1])
 
 
 def load_templates_into(rec: "QRecognizer", templates_dir: str = DEFAULT_TEMPLATES_DIR,

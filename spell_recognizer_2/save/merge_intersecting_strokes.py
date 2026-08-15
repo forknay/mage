@@ -1,28 +1,20 @@
 """
 Stroke Proximity/Touch Clustering
 ==================================
-Everything in this module answers ONE question: "which of these Strokes
-physically touch or cross one another?" It knows nothing about gesture
-recognition, templates, or "Level" -- it's a pure geometry primitive that
-the rest of the pipeline (recognizer.py, template_capture.py) builds
-meaning on top of.
-
-Works in terms of gesture_types.Stroke throughout: a Stroke is just "the
-points that make up one physically continuous pen-stroke" (points carry no
-identity of their own -- see gesture_types.py). Touch-clustering groups
-whole Stroke objects; the low-level segment/distance geometry underneath
-still just deals in raw (x, y) Points, since a crossing test doesn't care
-which stroke a point came from.
+Everything in this module answers ONE question: "which of these raw
+(x, y, stroke_id) points physically touch or cross one another?" It knows
+nothing about gesture recognition, templates, or "Level" -- it's a pure
+geometry primitive that the rest of the pipeline (recognizer.py,
+template_capture.py) builds meaning on top of.
 
 Layout of this file:
-  1. Segment / distance geometry -- low-level helpers (point-to-segment,
+  1. Point                       -- the shared data type for every module
+  2. Segment / distance geometry -- low-level helpers (point-to-segment,
                                      segment-to-segment, "do these two
-                                     segments cross?"), operating on plain
-                                     Points regardless of which Stroke(s)
-                                     they came from.
-  2. Stroke clustering            -- groups whole Strokes together based
-                                     on the geometry helpers above.
-  3. Public API                   -- group_strokes_by_proximity,
+                                     segments cross?")
+  3. Union-find clustering        -- groups whole strokes together based on
+                                     the geometry helpers above
+  4. Public API                   -- group_strokes_by_proximity,
                                      count_touch_units,
                                      merge_intersecting_strokes,
                                      merge_and_count_touch_units
@@ -30,7 +22,8 @@ Layout of this file:
 
 import math
 from typing import Dict, List, Optional, Tuple
-from gesture_types import Point, Stroke
+from dataclasses import dataclass
+
 from config import (
     DEFAULT_TOUCH_THRESHOLD,
     DEFAULT_ENDPOINT_TOUCH_THRESHOLD,
@@ -38,10 +31,28 @@ from config import (
     DEFAULT_TOUCH_DECIMATION_SPACING_DIVISOR,
     DEFAULT_TOUCH_GRID_MIN_SEGMENT_PRODUCT,
 )
-import spatial_index
+import spatial_index  # Added for Fix D
+
 
 # =============================================================================
-# 1. Low-level segment/distance geometry
+# 1. Shared data type
+# =============================================================================
+
+@dataclass
+class Point:
+    x: float
+    y: float
+    stroke_id: int = 0
+
+
+# NOTE: DEFAULT_TOUCH_THRESHOLD now lives in config.py (see that file for
+# the full explanation) and is re-exported here so existing `from
+# merge_intersecting_strokes import DEFAULT_TOUCH_THRESHOLD` call sites keep
+# working unchanged.
+
+
+# =============================================================================
+# 2. Low-level segment/distance geometry
 # =============================================================================
 
 def _point_to_segment_distance(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> float:
@@ -64,8 +75,12 @@ def _orientation(ax: float, ay: float, bx: float, by: float, cx: float, cy: floa
 
 def _segments_intersect(a1: Point, a2: Point, b1: Point, b2: Point) -> bool:
     """
-    True proper/boundary intersection test between segments A1-A2 and B1-B2.
-    This is what actually detects a visual "crossing" between two strokes.
+    True proper/boundary intersection test between segments A1-A2 and B1-B2
+    (standard orientation/CCW method), including collinear-overlap cases.
+    This is what actually detects a visual "crossing" between two strokes,
+    independent of how far apart the sampled points along each stroke happen
+    to be -- unlike a point-to-point distance check, it doesn't matter if the
+    true crossing point falls *between* two sampled points.
     """
     d1 = _orientation(b1.x, b1.y, b2.x, b2.y, a1.x, a1.y)
     d2 = _orientation(b1.x, b1.y, b2.x, b2.y, a2.x, a2.y)
@@ -113,13 +128,20 @@ def _segment_segment_distance(a1: Point, a2: Point, b1: Point, b2: Point) -> flo
 
 
 # =============================================================================
-# 2. Stroke clustering
+# 3. Union-find stroke clustering
 # =============================================================================
+
+def _group_points_by_stroke(points: List[Point]) -> Dict[int, List[Point]]:
+    """Splits a flat point list back out into {stroke_id: [points...]}."""
+    strokes_map: Dict[int, List[Point]] = {}
+    for p in points:
+        strokes_map.setdefault(p.stroke_id, []).append(p)
+    return strokes_map
 
 def _segment_bbox(a: Point, b: Point) -> tuple:
     """
     Returns (min_x, max_x, min_y, max_y) for a single two-point segment.
-    Deliberately not routed through `bounding_box` (which takes a list and
+    Deliberately not routed through `_bounding_box` (which takes a list and
     calls `min`/`max` with generator expressions) -- this is called once
     per segment inside `_strokes_touch`'s O(n*m) pair loop, so a direct
     2-value comparison avoids the extra function-call/iterator overhead
@@ -149,8 +171,8 @@ def _bounding_boxes_within_threshold(box_a: tuple, box_b: tuple, threshold: floa
 def _endpoints_touch(pts_a: List[Point], pts_b: List[Point], endpoint_threshold: float) -> bool:
     """
     Cheap, generous check: does EITHER endpoint (first or last recorded
-    point -- i.e. pen-down or pen-up) of point-run A land within
-    `endpoint_threshold` of EITHER endpoint of point-run B? This is
+    point -- i.e. pen-down or pen-up) of stroke A land within
+    `endpoint_threshold` of EITHER endpoint of stroke B? This is
     intentionally looser than the general crossing test in `_strokes_touch`
     (see DEFAULT_ENDPOINT_TOUCH_THRESHOLD in config.py for why) and is
     checked first since it's exactly the case real hand-drawn "meant to
@@ -240,7 +262,7 @@ def _strokes_touch_grid(segs_a: List[Tuple[Point, Point]], boxes_a: List[tuple],
     *length*.
 
     Reuses `spatial_index.SpatialGrid`, the exact structure already used
-    one level up (in `_cluster_strokes`) to cluster whole strokes, just
+    one level up (in `_cluster_stroke_ids`) to cluster whole strokes, just
     applied to individual segments here instead of whole strokes: segment
     B's segments are bucketed into a grid at `threshold` resolution, each
     inserted under its OWN bounding box expanded by `threshold` (so a
@@ -273,19 +295,15 @@ def _strokes_touch_grid(segs_a: List[Tuple[Point, Point]], boxes_a: List[tuple],
 def _strokes_touch(pts_a: List[Point], pts_b: List[Point], threshold: float,
                     endpoint_threshold: float = DEFAULT_ENDPOINT_TOUCH_THRESHOLD) -> bool:
     """
-    Detailed check for whether two point-runs should be merged as touching.
-    Each of `pts_a`/`pts_b` is one continuous run -- typically one Stroke's
-    `.points` (the internal clustering path below always calls it this
-    way), but it's equally valid to pass any single flat point cloud, which
-    is exactly what the public `strokes_touch` wrapper is for.
+    Detailed check for whether two strokes should be merged as touching.
 
     Two passes:
       1. `_endpoints_touch`, at the looser `endpoint_threshold` -- catches
          strokes meant to meet tip-to-tip (or tip-to-middle), where the raw
          pixel gap at the join is bigger than ordinary crossing noise.
       2. The original exhaustive segment-pair test, at the tighter
-         `threshold` -- build the polyline segments for each run
-         (consecutive points) and test every segment pair for a
+         `threshold` -- build the polyline segments for each stroke
+         (consecutive sampled points) and test every segment pair for a
          true geometric crossing or near-miss. This is deliberately NOT a
          point-to-point distance check -- two fast-drawn strokes can
          visually cross between two sparsely-sampled mouse points, in which
@@ -303,7 +321,7 @@ def _strokes_touch(pts_a: List[Point], pts_b: List[Point], threshold: float,
     Pass 2 itself is prefiltered per-segment (not just once per whole
     stroke) via `_bounding_boxes_within_threshold` -- see that segment loop
     below for why: the whole-stroke bounding-box prefilter one level up (in
-    `_cluster_strokes`) can't reject a pair whose overall extents
+    `_cluster_stroke_ids`) can't reject a pair whose overall extents
     overlap even when the actual curves never get close anywhere (e.g. a
     circle drawn around a star -- the circle's box contains the star's, so
     every point of every segment pair would otherwise be run through the
@@ -356,20 +374,17 @@ def _strokes_touch(pts_a: List[Point], pts_b: List[Point], threshold: float,
     return False
 
 
-def _cluster_strokes(strokes: List[Stroke], proximity_threshold: float,
-                      precomputed_boxes: Optional[Dict[int, Tuple[float, float, float, float]]] = None,
-                      endpoint_threshold: float = DEFAULT_ENDPOINT_TOUCH_THRESHOLD
-                      ) -> Dict[int, int]:
+def _cluster_stroke_ids(points: List[Point], proximity_threshold: float,
+                         precomputed_boxes: Optional[Dict[int, Tuple[float, float, float, float]]] = None,
+                         endpoint_threshold: float = DEFAULT_ENDPOINT_TOUCH_THRESHOLD
+                         ) -> Dict[int, int]:
     """
-    Core proximity clustering over Stroke objects (Upgraded with Fix D:
-    Spatial Indexing). Returns {index_into_strokes: cluster_root_index} --
-    indices into `strokes`, since Stroke itself carries no separate id to
-    key by (see gesture_types.Stroke: identity is "which list you're in",
-    not a tag).
+    Core proximity clustering (Upgraded with Fix D: Spatial Indexing).
+    Returns {original_stroke_id: cluster_root_stroke_id}.
 
     `precomputed_boxes` (OPTIMIZATION FIX #6): an optional
-    {index: (min_x, max_x, min_y, max_y)} map a caller can pass in when it
-    already knows some strokes' bounding boxes ahead of time.
+    {stroke_id: (min_x, max_x, min_y, max_y)} map a caller can pass in when
+    it already knows some strokes' bounding boxes ahead of time.
 
     `endpoint_threshold`: looser tip-to-stroke tolerance used by
     `_strokes_touch` (see DEFAULT_ENDPOINT_TOUCH_THRESHOLD in config.py).
@@ -378,26 +393,29 @@ def _cluster_strokes(strokes: List[Stroke], proximity_threshold: float,
     bounding-box prefilter never excludes a pair that the looser endpoint
     check would have accepted.
     """
-    if not strokes:
+    if not points:
         return {}
 
-    n = len(strokes)
-    if n <= 1:
-        return {i: i for i in range(n)}
+    # 1. Group raw points by their original stroke_id
+    strokes_map = _group_points_by_stroke(points)
+    stroke_ids = list(strokes_map.keys())
 
-    # 1. Prepare bounding boxes -- ALWAYS from each stroke's full,
-    # undecimated points (never from the touch-test-only thinned points
-    # below), since a bounding box computed off a thinned stroke could
-    # shrink if an interior extreme point got dropped, and this box also
-    # feeds the spatial grid's coarse prefilter, which must stay exact.
-    boxes: Dict[int, tuple] = {}
-    for i, stroke in enumerate(strokes):
-        if precomputed_boxes is not None and i in precomputed_boxes:
-            boxes[i] = precomputed_boxes[i]  # FIX #6: reuse caller's cached box
+    if len(stroke_ids) <= 1:
+        return {s_id: s_id for s_id in stroke_ids}
+
+    # 2. Prepare bounding boxes -- ALWAYS from the full, undecimated points
+    # (never from the touch-test-only thinned points below), since a
+    # bounding box computed off a thinned stroke could shrink if an
+    # interior extreme point got dropped, and this box also feeds the
+    # spatial grid's coarse prefilter, which must stay exact.
+    boxes = {}
+    for s_id in stroke_ids:
+        if precomputed_boxes is not None and s_id in precomputed_boxes:
+            boxes[s_id] = precomputed_boxes[s_id]  # FIX #6: reuse caller's cached box
         else:
-            boxes[i] = bounding_box(stroke.points)
+            boxes[s_id] = _bounding_box(strokes_map[s_id])
 
-    # 2. Thin each stroke's points ONCE, up front, for touch-testing only
+    # 2b. Thin each stroke's points ONCE, up front, for touch-testing only
     # -- see `_decimate_points_for_touch`. Computed once per stroke here
     # rather than once per pairwise comparison inside `_strokes_touch`,
     # since the same stroke can be tested against several potential
@@ -406,8 +424,8 @@ def _cluster_strokes(strokes: List[Stroke], proximity_threshold: float,
     # thinning work over and over for a busy/dense region of the canvas.
     decimation_spacing = proximity_threshold / DEFAULT_TOUCH_DECIMATION_SPACING_DIVISOR
     touch_test_points = {
-        i: _decimate_points_for_touch(strokes[i].points, decimation_spacing)
-        for i in range(n)
+        s_id: _decimate_points_for_touch(strokes_map[s_id], decimation_spacing)
+        for s_id in stroke_ids
     }
 
     # 3. Use generic Spatial Indexing (BFS) instead of O(N^2) Union-Find (FIX D)
@@ -419,140 +437,139 @@ def _cluster_strokes(strokes: List[Stroke], proximity_threshold: float,
 
     search_radius = max(proximity_threshold, endpoint_threshold)
     clusters = cluster_func(
-        items=list(range(n)),
-        get_bbox_fn=lambda i: boxes[i],
+        items=stroke_ids,
+        get_bbox_fn=lambda s_id: boxes[s_id],
         is_touching_fn=lambda a, b: _strokes_touch(
             touch_test_points[a], touch_test_points[b], proximity_threshold, endpoint_threshold
         ),
         threshold=search_radius
     )
 
-    # 4. Convert clustered lists back into {index: root_index} format so
-    # the rest of the public API doesn't need to change.
-    root_of: Dict[int, int] = {}
+    # 4. Convert clustered lists back into {stroke_id: root_stroke_id} format 
+    #    so the rest of the public API doesn't need to change.
+    root_of = {}
     for cluster in clusters:
         # Assign the first item in the connected component as the root
         root = cluster[0]
-        for i in cluster:
-            root_of[i] = root
+        for s_id in cluster:
+            root_of[s_id] = root
 
     return root_of
 
 
 # =============================================================================
-# 3. Public API
+# 4. Public API
 # =============================================================================
 
-def group_strokes_by_proximity(strokes: List[Stroke], proximity_threshold: float = DEFAULT_TOUCH_THRESHOLD,
+def group_strokes_by_proximity(points: List[Point], proximity_threshold: float = DEFAULT_TOUCH_THRESHOLD,
                                 precomputed_boxes: Optional[Dict[int, Tuple[float, float, float, float]]] = None,
                                 endpoint_threshold: float = DEFAULT_ENDPOINT_TOUCH_THRESHOLD
-                                ) -> List[List[Stroke]]:
+                                ) -> List[List[Point]]:
     """
-    Groups Strokes into spatial clusters.
+    Groups strokes into spatial clusters WITHOUT renumbering/flattening them.
 
-    Returns a list of clusters; each cluster is the list of original Stroke
-    objects that are within `proximity_threshold` of one another, directly
-    or transitively. Cluster order follows the first-appearance order of
-    each cluster in `strokes`, and each cluster's own strokes keep their
-    relative order from `strokes` too.
+    Returns a list of clusters; each cluster is the list of original Points
+    (original stroke_id preserved) belonging to strokes that are within
+    `proximity_threshold` of one another, directly or transitively. Cluster
+    order follows the first-appearance order of each cluster in `points`.
 
     NOTE: this is a general-purpose proximity-clustering primitive -- it
     doesn't know or care about Level. Called with the default (tight) touch
-    threshold on raw pen-strokes, it's the "do these strokes physically
-    touch?" test used to build SHAPE-level units out of a canvas. The same
-    primitive is reused for other kinds of clustering elsewhere (e.g.
-    recognizer.py bundling already-recognized Features by proximity, via
-    the lower-level `strokes_touch`/`bounding_boxes_within_threshold`
-    building blocks directly) -- but that higher-level composition decision
-    does not live in this file.
+    threshold on *raw stroke points*, it's the "do these strokes physically
+    touch?" test used to build SHAPE-level units out of a canvas. It's also
+    reused, elsewhere, as a generic clustering primitive over other kinds of
+    points (e.g. recognizer.py reuses it to group already-recognized
+    SceneFeatures by proximity when composing the next level up) -- but that
+    higher-level composition decision does not live in this file.
 
-    `precomputed_boxes` (OPTIMIZATION FIX #6): see `_cluster_strokes` --
-    purely a speed optimization for callers who already know some strokes'
+    `precomputed_boxes` (OPTIMIZATION FIX #6): see `_cluster_stroke_ids` --
+    purely a speed optimization for callers who already know some `stroke_id`
     bounding boxes; leaving it as None reproduces the original behavior
     exactly.
     """
-    if not strokes:
+    if not points:
         return []
 
-    root_of = _cluster_strokes(strokes, proximity_threshold, precomputed_boxes, endpoint_threshold)
+    root_of = _cluster_stroke_ids(points, proximity_threshold, precomputed_boxes, endpoint_threshold)
 
-    clusters: Dict[int, List[Stroke]] = {}
+    clusters: Dict[int, List[Point]] = {}
     order: List[int] = []
-    for i, stroke in enumerate(strokes):
-        root = root_of[i]
+    for p in points:
+        root = root_of[p.stroke_id]
         if root not in clusters:
             clusters[root] = []
             order.append(root)
-        clusters[root].append(stroke)
+        clusters[root].append(p)
 
     return [clusters[root] for root in order]
 
 
-def count_touch_units(strokes: List[Stroke], proximity_threshold: float = DEFAULT_TOUCH_THRESHOLD,
+def count_touch_units(points: List[Point], proximity_threshold: float = DEFAULT_TOUCH_THRESHOLD,
                        endpoint_threshold: float = DEFAULT_ENDPOINT_TOUCH_THRESHOLD) -> int:
     """
-    Returns the number of physically-separate stroke units in `strokes` --
+    Returns the number of physically-separate stroke units in `points` --
     i.e. how many touch-merged clusters `group_strokes_by_proximity` would
     produce. This is the single source of truth for "level" elsewhere in the
-    pipeline: a feature/template's level is defined as exactly this count,
+    pipeline: a SceneFeature/template's level is defined as exactly this count,
     not an arbitrary label. Two strokes that touch/cross (like the two
     strokes of a hand-drawn "+") collapse into ONE unit; two strokes that
     never get within `proximity_threshold` of one another (like the stem and
     dot of a hand-drawn "!") count as TWO separate units, and so on -- with
     no ceiling on how many.
     """
-    return len(group_strokes_by_proximity(strokes, proximity_threshold, endpoint_threshold=endpoint_threshold))
+    return len(group_strokes_by_proximity(points, proximity_threshold, endpoint_threshold=endpoint_threshold))
 
 
-def merge_intersecting_strokes(strokes: List[Stroke], proximity_threshold: float = DEFAULT_TOUCH_THRESHOLD,
-                                endpoint_threshold: float = DEFAULT_ENDPOINT_TOUCH_THRESHOLD) -> List[Stroke]:
+def merge_intersecting_strokes(points: List[Point], proximity_threshold: float = DEFAULT_TOUCH_THRESHOLD,
+                                endpoint_threshold: float = DEFAULT_ENDPOINT_TOUCH_THRESHOLD) -> List[Point]:
     """
-    Merges Strokes together ONLY if any point in stroke A is within
+    Groups strokes together ONLY if any point in stroke A is within
     `proximity_threshold` pixels of any point in stroke B (handles
     intersections and near-touching strokes) -- i.e. physical contact, and
     nothing else. This is intentionally level-agnostic: it has no idea what
     a SHAPE or OBJECT is, and it will never fuse two strokes just because
     they're "supposed to" belong to the same higher-level figure. Composing
-    recognized SHAPE-level features into a composite OBJECT (strokes that
+    recognized SHAPE-level SceneFeatures into a composite OBJECT (strokes that
     don't touch but belong together) is handled one layer up, in
     recognizer.py, after each piece has been recognized on its own.
 
-    Returns one Stroke per touch-cluster, each holding the concatenated
-    points of every original Stroke in that cluster (original per-stroke
-    point order preserved, clusters in first-appearance order) -- i.e. each
-    touch-merged cluster IS one Stroke object afterwards. That's what makes
-    downstream per-stroke logic (path length / resampling, in
-    recognizer.py) treat a merged cluster as one continuous run: it
-    literally is a single Stroke now, the same way giving merged points a
-    shared stroke_id used to signal that under the old tagging scheme.
+    Returns a flat list of points (original order preserved) with stroke_id
+    reassigned to a clean, sequential id per merged cluster, so downstream
+    per-stroke logic (path length / resampling) treats each merged cluster as
+    one continuous stroke.
     """
-    if not strokes:
+    if not points:
         return []
-    if len(strokes) <= 1:
-        return strokes  # Nothing to merge
 
-    root_of = _cluster_strokes(strokes, proximity_threshold, endpoint_threshold=endpoint_threshold)
+    distinct_ids = {p.stroke_id for p in points}
+    if len(distinct_ids) <= 1:
+        return points  # Nothing to merge
 
-    root_to_points: Dict[int, List[Point]] = {}
-    root_order: List[int] = []
-    for i, stroke in enumerate(strokes):
-        root = root_of[i]
-        if root not in root_to_points:
-            root_to_points[root] = []
-            root_order.append(root)
-        root_to_points[root].extend(stroke.points)
+    root_of = _cluster_stroke_ids(points, proximity_threshold, endpoint_threshold=endpoint_threshold)
 
-    return [Stroke(points=root_to_points[root]) for root in root_order]
+    # Map root cluster IDs to clean sequential IDs (0, 1, 2...)
+    root_to_new_id: Dict[int, int] = {}
+    merged_points: List[Point] = []
+
+    for p in points:
+        root_id = root_of[p.stroke_id]
+        if root_id not in root_to_new_id:
+            root_to_new_id[root_id] = len(root_to_new_id)
+
+        new_stroke_id = root_to_new_id[root_id]
+        merged_points.append(Point(p.x, p.y, stroke_id=new_stroke_id))
+
+    return merged_points
 
 
-def merge_and_count_touch_units(strokes: List[Stroke], proximity_threshold: float = DEFAULT_TOUCH_THRESHOLD,
+def merge_and_count_touch_units(points: List[Point], proximity_threshold: float = DEFAULT_TOUCH_THRESHOLD,
                                  endpoint_threshold: float = DEFAULT_ENDPOINT_TOUCH_THRESHOLD
-                                 ) -> Tuple[List[Stroke], int]:
+                                 ) -> Tuple[List[Point], int]:
     """
-    OPTIMIZATION FIX C: `count_touch_units(strokes, t)` and
-    `merge_intersecting_strokes(strokes, t)` each run their own full pass of
+    OPTIMIZATION FIX C: `count_touch_units(points, t)` and
+    `merge_intersecting_strokes(points, t)` each run their own full pass of
     the union-find + bounding-box-prefiltered segment-touch clustering in
-    `_cluster_strokes` -- on the exact same `strokes` and the exact same
+    `_cluster_stroke_ids` -- on the exact same `points` and the exact same
     `proximity_threshold`. Calling both back-to-back (as recognizer.py's
     `recognize()`/`add_template` used to: once to validate the requested
     "level" against the touch-unit count, then again moments later inside
@@ -562,35 +579,34 @@ def merge_and_count_touch_units(strokes: List[Stroke], proximity_threshold: floa
 
     This does the clustering ONCE and returns both pieces of information
     that were being derived from it separately:
-      - `merged_strokes`: identical to what `merge_intersecting_strokes`
-        would return (one Stroke per touch-merged cluster).
+      - `merged_points`: identical to what `merge_intersecting_strokes`
+        would return (points with stroke_id reassigned per touch-merged
+        cluster).
       - `unit_count`: identical to what `count_touch_units` would return
-        (how many distinct touch-merged clusters there are -- always
-        `len(merged_strokes)`).
+        (how many distinct touch-merged clusters there are).
 
     Behavior is otherwise identical to calling both functions separately --
-    same threshold, same underlying `_cluster_strokes` call, same
+    same threshold, same underlying `_cluster_stroke_ids` call, same
     results -- just computed once instead of twice.
     """
-    if not strokes:
+    if not points:
         return [], 0
-    if len(strokes) <= 1:
-        return strokes, len(strokes)  # Nothing to merge; a non-empty input is always exactly 1 unit here.
 
-    root_of = _cluster_strokes(strokes, proximity_threshold, endpoint_threshold=endpoint_threshold)
+    distinct_ids = {p.stroke_id for p in points}
+    if len(distinct_ids) <= 1:
+        return points, len(distinct_ids)  # Nothing to merge; a non-empty input is always exactly 1 unit here.
 
-    root_to_points: Dict[int, List[Point]] = {}
-    root_order: List[int] = []
-    for i, stroke in enumerate(strokes):
-        root = root_of[i]
-        if root not in root_to_points:
-            root_to_points[root] = []
-            root_order.append(root)
-        root_to_points[root].extend(stroke.points)
+    root_of = _cluster_stroke_ids(points, proximity_threshold, endpoint_threshold=endpoint_threshold)
 
-    merged = [Stroke(points=root_to_points[root]) for root in root_order]
-    return merged, len(merged)
+    root_to_new_id: Dict[int, int] = {}
+    merged_points: List[Point] = []
+    for p in points:
+        root_id = root_of[p.stroke_id]
+        if root_id not in root_to_new_id:
+            root_to_new_id[root_id] = len(root_to_new_id)
+        merged_points.append(Point(p.x, p.y, stroke_id=root_to_new_id[root_id]))
 
+    return merged_points, len(root_to_new_id)
 
 def bounding_box(points: List[Point]) -> tuple:
     """Returns (min_x, max_x, min_y, max_y) for a list of points."""
@@ -607,19 +623,19 @@ def strokes_touch(pts_a: List[Point], pts_b: List[Point], threshold: float,
                    endpoint_threshold: float = DEFAULT_ENDPOINT_TOUCH_THRESHOLD) -> bool:
     """
     Public wrapper for the full touch test between two point lists, each
-    treated as a single run (internal stroke boundaries within a list
-    aren't respected here -- this answers "are these two POINT CLOUDS
-    within `threshold` of one another", not "which strokes touch which").
+    treated as a single unit (stroke_id boundaries within a list aren't
+    respected here -- this answers "are these two POINT CLOUDS within
+    `threshold` of one another", not "which strokes touch which").
 
     Exposed so a caller that already has two specific point clouds it
     wants to compare -- e.g. recognizer.py bundling already-recognized
-    Features by proximity, via their flattened `Feature.points` -- can
-    reuse the fully-optimized touch test (endpoint short-circuit,
-    per-segment AABB prefilter, touch-test decimation, and grid-indexed
-    search for long strokes -- see `_strokes_touch`'s own docstring)
-    directly, without needing to route through
-    `group_strokes_by_proximity`'s whole-canvas-of-many-strokes machinery,
-    which solves a different problem (clustering many raw strokes at once)
-    than "are these two point clouds I already have close to each other".
+    SceneFeatures by proximity -- can reuse the fully-optimized touch test
+    (endpoint short-circuit, per-segment AABB prefilter, touch-test
+    decimation, and grid-indexed search for long strokes -- see
+    `_strokes_touch`'s own docstring) directly, without needing to route
+    through `group_strokes_by_proximity`'s whole-canvas-of-many-strokes
+    machinery, which solves a different problem (clustering many raw
+    strokes at once) than "are these two point clouds I already have close
+    to each other".
     """
     return _strokes_touch(pts_a, pts_b, threshold, endpoint_threshold)

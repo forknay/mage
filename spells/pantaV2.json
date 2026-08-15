@@ -1,0 +1,120 @@
+{
+  "name": "warded_pentagram",
+  "min_score": 0.5,
+  "features": [
+    {
+      "id": 0,
+      "shape": "star_5",
+      "distance": 0.0,
+      "tolerance_dist": 0.25
+    },
+    {
+      "id": 1,
+      "shape": "circle"
+    },
+    {
+      "id": 2,
+      "shape": "circle"
+    },
+    {
+      "id": 3,
+      "shape": "triangle_up",
+      "min_angle": 330,
+      "max_angle": 30,
+      "tolerance_angle": 35
+    },
+    {
+      "id": 4,
+      "shape": "triangle_up",
+      "min_angle": 60,
+      "max_angle": 120,
+      "tolerance_angle": 35
+    },
+    {
+      "id": 5,
+      "shape": "triangle_up",
+      "min_angle": 150,
+      "max_angle": 210,
+      "tolerance_angle": 35
+    },
+    {
+      "id": 6,
+      "shape": "triangle_up",
+      "min_angle": 240,
+      "max_angle": 300,
+      "tolerance_angle": 35
+    }
+  ],
+  "relative_constraints": [
+    {
+      "subject_id": 0,
+      "reference_id": 1,
+      "relation": "inside",
+      "margin": 0.0,
+      "tolerance": 0.18
+    },
+    {
+      "subject_id": 1,
+      "reference_id": 2,
+      "relation": "inside",
+      "margin": 0.0,
+      "tolerance": 0.18
+    },
+    {
+      "subject_id": 3,
+      "reference_id": 1,
+      "relation": "outside",
+      "margin": 0.0,
+      "tolerance": 0.18
+    },
+    {
+      "subject_id": 3,
+      "reference_id": 2,
+      "relation": "inside",
+      "margin": 0.0,
+      "tolerance": 0.18
+    },
+    {
+      "subject_id": 4,
+      "reference_id": 1,
+      "relation": "outside",
+      "margin": 0.0,
+      "tolerance": 0.18
+    },
+    {
+      "subject_id": 4,
+      "reference_id": 2,
+      "relation": "inside",
+      "margin": 0.0,
+      "tolerance": 0.18
+    },
+    {
+      "subject_id": 5,
+      "reference_id": 1,
+      "relation": "outside",
+      "margin": 0.0,
+      "tolerance": 0.18
+    },
+    {
+      "subject_id": 5,
+      "reference_id": 2,
+      "relation": "inside",
+      "margin": 0.0,
+      "tolerance": 0.18
+    },
+    {
+      "subject_id": 6,
+      "reference_id": 1,
+      "relation": "outside",
+      "margin": 0.0,
+      "tolerance": 0.18
+    },
+    {
+      "subject_id": 6,
+      "reference_id": 2,
+      "relation": "inside",
+      "margin": 0.0,
+      "tolerance": 0.18
+    }
+  ]
+}

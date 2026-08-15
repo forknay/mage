@@ -48,3 +48,6 @@ __pycache__/
 # spells images for training
 dataset/
 dataset_prep/
+
+# Jenova
+Jenova/

@@ -9,11 +9,12 @@ and incremental canvas updating within a single unified class.
 import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
-from gesture_types import Point, Stroke, Template, RecognitionResult, Feature, stroke_from_points
+
 import numpy as np
 import spatial_index
 
 from merge_intersecting_strokes import (
+    Point,
     DEFAULT_TOUCH_THRESHOLD,
     DEFAULT_ENDPOINT_TOUCH_THRESHOLD,
     merge_intersecting_strokes,
@@ -36,34 +37,55 @@ from config import (
 )
 
 
+# =============================================================================
+# 1. Data Types
+# =============================================================================
 
 @dataclass
-class _IncrementalGroup:
-    """
-    One spatially-isolated region tracked by QRecognizer's incremental
-    canvas API (add_stroke/clear/incremental_features et al.) -- NOT a
-    recognition concept itself, just bookkeeping so a new stroke only ever
-    forces recomputation in the region(s) it could actually affect.
+class Template:
+    """Represents a registered gesture template."""
+    name: str
+    points: List[Point]       
+    xs: np.ndarray            
+    ys: np.ndarray            
+    lut: np.ndarray           # 2D int array for fast O(1) candidate queries
+    level: int                # Number of physically-separate stroke units
+    aspect_ratio: float = 1.0 # Raw bounding box aspect ratio before uniform scaling
+    min_score: float = DEFAULT_MIN_SCORE
 
-    A group is "spatially isolated" in the sense that nothing inside it is
-    within `max_gap` of anything in any other group -- see add_stroke's
-    "touched" test, which is what keeps groups apart or merges them back
-    together as strokes land near/across their boundaries.
 
-    Two parallel lists, not a nested dict, so each is independently
-    flattenable/inspectable:
-      - atomic_features: every Level-1 Feature in this region (each
-        already carries its own cached bounding box -- see
-        Feature.bounding_box() -- which is what add_stroke tests a new
-        stroke against at per-feature granularity).
-      - features: this region's fully-composed output -- the atomics that
-        didn't merge into anything, plus whatever composite (Level 2+)
-        Features the composition ladder built out of them. This is
-        the list QRecognizer.features (flattened across every group)
-        exposes to callers.
-    """
-    atomic_features: List[Feature] = field(default_factory=list)
-    features: List[Feature] = field(default_factory=list)
+@dataclass
+class RecognitionResult:
+    """The output of matching candidate points against templates."""
+    name: Optional[str]
+    score: float      
+    distance: float   
+    min_score: float = 0.0
+    accepted: bool = False
+
+
+@dataclass
+class SceneSceneFeature:
+    """A distinct, recognized SceneFeature (either atomic or composite) on the canvas."""
+    cluster_id: int
+    level: int
+    result: RecognitionResult
+    points: List[Point]
+    components: List["SceneSceneFeature"] = field(default_factory=list)
+    _bbox_cache: Optional[Tuple[float, float, float, float]] = field(
+        default=None, repr=False, compare=False
+    )
+
+    def bounding_box(self) -> Tuple[float, float, float, float]:
+        """
+        Lazily computes and caches the (min_x, max_x, min_y, max_y) bounding box.
+        Safe to cache because self.points are immutable after construction.
+        """
+        if self._bbox_cache is None:
+            xs = [p.x for p in self.points]
+            ys = [p.y for p in self.points]
+            self._bbox_cache = (min(xs), max(xs), min(ys), max(ys))
+        return self._bbox_cache
 
 
 # =============================================================================
@@ -78,10 +100,7 @@ class QRecognizer:
                  touch_threshold: float = DEFAULT_TOUCH_THRESHOLD,
                  endpoint_touch_threshold: float = DEFAULT_ENDPOINT_TOUCH_THRESHOLD,
                  level_merge_thresholds: Optional[Dict[int, float]] = None,
-                 aspect_ratio_weight: float = ASPECT_RATIO_WEIGHT,
-                 cloud_distance_penalty_threshold: float = CLOUD_DISTANCE_PENALTY_THRESHOLD,
-                 cloud_distance_exponent: float = CLOUD_DISTANCE_EXPONENT,
-                 cloud_distance_max_weight: float = CLOUD_DISTANCE_MAX_WEIGHT):
+                 aspect_ratio_weight: float = ASPECT_RATIO_WEIGHT): 
         self.n = num_resample_points
         self.frame_size = frame_size
         self.lut_size = lut_size
@@ -90,16 +109,6 @@ class QRecognizer:
         self.touch_threshold = touch_threshold
         self.endpoint_touch_threshold = endpoint_touch_threshold
         self.aspect_ratio_weight = aspect_ratio_weight
-        # Cloud-distance scoring knobs -- see config.py section 4 for what
-        # each one trades off. Kept as instance attributes (not bare
-        # function-default args, which get bound once at import time and
-        # can't be tuned per-instance afterward) so both "edit config.py's
-        # defaults and restart" and "pass a different value into this
-        # QRecognizer" work, matching touch_threshold/aspect_ratio_weight
-        # above.
-        self.cloud_distance_penalty_threshold = cloud_distance_penalty_threshold
-        self.cloud_distance_exponent = cloud_distance_exponent
-        self.cloud_distance_max_weight = cloud_distance_max_weight
         self.level_merge_thresholds: Dict[int, float] = {
             **DEFAULT_LEVEL_MERGE_THRESHOLDS, **(level_merge_thresholds or {})
         }
@@ -115,22 +124,18 @@ class QRecognizer:
         # Maximum gap for physical Level-1 touch
         self.atomic_gap = max(self.touch_threshold, self.endpoint_touch_threshold)
 
-        # `atomic_features`/`features` are read-only properties (below) that
-        # derive their value from `_groups` -- there's nothing to assign
-        # them directly (they have no setter), so init the state they
-        # actually read from instead. This is also what `clear()` resets.
-        self._groups: List[_IncrementalGroup] = []
+        self._groups: List[dict] = []
         self._touch_cache: Dict[Tuple[int, int], bool] = {}
 
     # -------------------------------------------------------------------------
     # Public APIs: Template Registration
     # -------------------------------------------------------------------------
 
-    def add_template(self, name: str, strokes: List[Stroke], level: Optional[int] = None,
+    def add_template(self, name: str, points: List[Point], level: Optional[int] = None,
                       min_score: float = DEFAULT_MIN_SCORE) -> None:
         """Registers a new template, inferring stroke units (level) if not provided."""
-        merged_strokes, actual_units = merge_and_count_touch_units(
-            strokes, self.touch_threshold, self.endpoint_touch_threshold
+        merged_points, actual_units = merge_and_count_touch_units(
+            points, self.touch_threshold, self.endpoint_touch_threshold
         )
         
         if level is None:
@@ -141,8 +146,8 @@ class QRecognizer:
                 f"with level={level}."
             )
 
-        aspect_ratio = self._compute_aspect_ratio([p for s in strokes for p in s.points])
-        processed = self._preprocess(merged_strokes, level=level, already_merged=True)
+        aspect_ratio = self._compute_aspect_ratio(points)
+        processed = self._preprocess(merged_points, level=level, already_merged=True)
         xs, ys = self._xy(processed)
         lut = self._create_lut(xs, ys)
         
@@ -167,23 +172,23 @@ class QRecognizer:
     # Public APIs: Batch & Single-Gesture Recognition
     # -------------------------------------------------------------------------
 
-    def recognize(self, strokes: List[Stroke],
+    def recognize(self, points: List[Point],
                   level: int = 1,
                   candidate_names: Optional[List[str]] = None) -> RecognitionResult:
-        """Classifies a point cloud (given as its constituent Strokes) against registered templates at a specific level."""
+        """Classifies a point cloud against registered templates at a specific level."""
         if not self.templates:
             raise ValueError("No templates registered.")
 
         candidates = self._candidates_at_level(level, candidate_names)
-        merged_strokes, actual_units = merge_and_count_touch_units(
-            strokes, self.touch_threshold, self.endpoint_touch_threshold
+        merged_points, actual_units = merge_and_count_touch_units(
+            points, self.touch_threshold, self.endpoint_touch_threshold
         )
         
         if actual_units != level:
             raise ValueError(f"Cannot classify at level={level}: input has {actual_units} units.")
 
-        cand_aspect_ratio = self._compute_aspect_ratio([p for s in strokes for p in s.points])
-        processed = self._preprocess(merged_strokes, level=level, already_merged=True)
+        cand_aspect_ratio = self._compute_aspect_ratio(points)
+        processed = self._preprocess(merged_points, level=level, already_merged=True)
         
         best_template, best_distance, best_score = self._best_matching_template(
             processed, cand_aspect_ratio, candidates
@@ -197,125 +202,101 @@ class QRecognizer:
             accepted=best_score >= best_template.min_score,
         )
 
-    def recognize_scene(self, strokes: List[Stroke],
+    def recognize_scene(self, points: List[Point],
                          level_merge_thresholds: Optional[Dict[int, float]] = None,
-                         min_score: float = 0.0) -> List[Feature]:
+                         min_score: float = 0.0) -> List[SceneSceneFeature]:
         """
         Parses the entire canvas bottom-up in a single batch pass.
-        1. Split into atomic (Level-1) features.
-        2. Progressively bundle nearby features into composite (Level 2+) features.
+        1. Split into atomic (Level-1) SceneFeatures.
+        2. Progressively bundle nearby SceneFeatures into composite (Level 2+) SceneFeatures.
         """
-        if not strokes or not self.templates:
+        if not points or not self.templates:
             return []
 
-        current_features = self._recognize_atomic_clusters(strokes)
-        return self._compose_from_atomic(current_features, level_merge_thresholds, min_score)
+        current_SceneFeatures = self._recognize_atomic_clusters(points)
+        return self._compose_from_atomic(current_SceneFeatures, level_merge_thresholds, min_score)
 
     # -------------------------------------------------------------------------
     # Public APIs: Incremental Canvas Recognition
     # -------------------------------------------------------------------------
 
     @property
-    def features(self) -> List[Feature]:
-        """
-        Flattened, fully-composed features across every tracked incremental
-        canvas region -- i.e. everything add_stroke has produced so far
-        (atomics that never merged into anything, plus every accepted
-        composite built on top of them). This is the list callers actually
-        want; `_groups`/`atomic_features` are internal bookkeeping.
-        """
-        return [f for g in self._groups for f in g.features]
+    def incremental_SceneFeatures(self) -> List[SceneSceneFeature]:
+        """Flattened accepted SceneFeatures across all tracked incremental canvas regions."""
+        return [f for g in self._groups for f in g["SceneFeatures"]]
 
-    @property
-    def atomic_features(self) -> List[Feature]:
-        """
-        Flattened Level-1 features across every tracked incremental canvas
-        region, BEFORE composition -- i.e. every physically-separate
-        touch-cluster recognized on its own, regardless of whether it later
-        got folded into a composite. Exposed mainly for
-        inspection/debugging; `features` is what most callers want.
-        """
-        return [f for g in self._groups for f in g.atomic_features]
-
-    # Old name, kept as a thin alias so any existing call sites (or
-    # in-progress branches) that still say `.incremental_features` keep
-    # working -- `features` is the name to use going forward.
-    incremental_features = features
-
-    def add_stroke(self, stroke: Stroke) -> List[Feature]:
+    def add_stroke(self, stroke_points: List[Point]) -> List[SceneSceneFeature]:
         """
         Incorporates a new stroke dynamically, isolating atomic recomputations
         to affected spatial groups while reusing untouched regional caches.
 
         Granularity note: both the "which groups might be affected at all"
-        test and the "which atomic features actually need re-clustering"
-        test are done PER ATOMIC FEATURE (via Feature.bounding_box(),
-        which is cached -- see Feature), not against a group's
+        test and the "which atomic SceneFeatures actually need re-clustering"
+        test are done PER ATOMIC SceneFeature (via SceneSceneFeature.bounding_box(),
+        which is cached -- see SceneSceneFeature), not against a group's
         aggregate bounding box. A group's aggregate box is the union of
-        every atomic feature's box inside it, so a new stroke landing in
+        every atomic SceneFeature's box inside it, so a new stroke landing in
         the "empty middle" of a spatially-spread-out group (e.g. two
-        features sitting in opposite corners of a large group, with the
+        SceneFeatures sitting in opposite corners of a large group, with the
         new stroke somewhere between them but not actually near either)
         would spuriously satisfy an aggregate-box overlap test even though
-        no individual feature in that group is anywhere near it -- forcing
-        a full atomic recompute (and re-running composition) over features
-        that couldn't possibly be touched. Testing each atomic feature's
+        no individual SceneFeature in that group is anywhere near it -- forcing
+        a full atomic recompute (and re-running composition) over SceneFeatures
+        that couldn't possibly be touched. Testing each atomic SceneFeature's
         own box individually only ever narrows this down, never misses a
-        real touch: if a feature truly is within `max_gap`/`atomic_gap` of
-        the new stroke, that feature's own box will satisfy the check
+        real touch: if a SceneFeature truly is within `max_gap`/`atomic_gap` of
+        the new stroke, that SceneFeature's own box will satisfy the check
         regardless of what else is (or isn't) in its group.
         """
-        if not stroke.points:
-            return self.features
+        if not stroke_points:
+            return self.incremental_SceneFeatures
 
-        new_box = bounding_box(stroke.points)
+        new_box = bounding_box(stroke_points)
 
         touched_indices = []
         for i, group in enumerate(self._groups):
             group_touched = any(
                 bounding_boxes_within_threshold(new_box, feat.bounding_box(), self.max_gap)
-                for feat in group.atomic_features
+                for feat in group["atomic_SceneFeatures"]
             )
             if group_touched:
                 touched_indices.append(i)
 
         remaining_groups = [g for i, g in enumerate(self._groups) if i not in touched_indices]
 
-        # Per-atomic-feature split within every touched group: only features
+        # Per-atomic-SceneFeature split within every touched group: only SceneFeatures
         # individually within `atomic_gap` of the new stroke get folded into
         # the physical (Level-1) recompute; everything else in the same
         # touched group is reused as-is and simply handed back into
         # composition alongside whatever comes out of the recompute.
-        atomic_recompute_strokes: List[Stroke] = [stroke]
-        reused_atomic_features: List[Feature] = []
+        atomic_recompute_points = list(stroke_points)
+        reused_atomic_SceneFeatures: List[SceneSceneFeature] = []
         for i in touched_indices:
-            for feat in self._groups[i].atomic_features:
+            for feat in self._groups[i]["atomic_SceneFeatures"]:
                 if bounding_boxes_within_threshold(new_box, feat.bounding_box(), self.atomic_gap):
-                    atomic_recompute_strokes.extend(feat.strokes)
+                    atomic_recompute_points.extend(feat.points)
                 else:
-                    reused_atomic_features.append(feat)
+                    reused_atomic_SceneFeatures.append(feat)
 
-        # Preserve chronological stroke ordering. Points no longer carry a
-        # stroke_id to sort by, so each Stroke's own creation-order `seq`
-        # (see gesture_types.Stroke) stands in for it.
-        atomic_recompute_strokes.sort(key=lambda s: s.seq)
+        # Preserve chronological stroke ordering
+        atomic_recompute_points.sort(key=lambda p: p.stroke_id)
 
-        new_atomic_features = self._recognize_atomic_clusters(atomic_recompute_strokes)
+        new_atomic_SceneFeatures = self._recognize_atomic_clusters(atomic_recompute_points)
 
-        combined_atomic_features = new_atomic_features + reused_atomic_features
-        combined_atomic_features.sort(key=lambda f: min(s.seq for s in f.strokes))
+        combined_atomic_SceneFeatures = new_atomic_SceneFeatures + reused_atomic_SceneFeatures
+        combined_atomic_SceneFeatures.sort(key=lambda f: min(p.stroke_id for p in f.points))
 
-        new_features = self._compose_from_atomic(
-            combined_atomic_features, touch_cache=self._touch_cache,
+        new_SceneFeatures = self._compose_from_atomic(
+            combined_atomic_SceneFeatures, touch_cache=self._touch_cache,
         )
 
-        remaining_groups.append(_IncrementalGroup(
-            atomic_features=combined_atomic_features,
-            features=new_features,
-        ))
+        remaining_groups.append({
+            "atomic_SceneFeatures": combined_atomic_SceneFeatures,
+            "SceneFeatures": new_SceneFeatures,
+        })
 
         self._groups = remaining_groups
-        return self.features
+        return self.incremental_SceneFeatures
 
     def clear(self) -> None:
         """Resets the incremental regional tracking state and touch cache."""
@@ -326,89 +307,85 @@ class QRecognizer:
     # Core Pipeline: Recognition & Composition Helpers
     # -------------------------------------------------------------------------
 
-    def _recognize_atomic_clusters(self, strokes: List[Stroke]) -> List[Feature]:
-        """Clusters raw strokes by physical touch and attempts Level-1 recognition."""
+    def _recognize_atomic_clusters(self, points: List[Point]) -> List[SceneSceneFeature]:
+        """Clusters raw points by physical touch and attempts Level-1 recognition."""
         atomic_clusters = group_strokes_by_proximity(
-            strokes, self.touch_threshold, endpoint_threshold=self.endpoint_touch_threshold
+            points, self.touch_threshold, endpoint_threshold=self.endpoint_touch_threshold
         )
 
-        features: List[Feature] = []
-        for cluster_id, cluster_strokes in enumerate(atomic_clusters):
-            result = self._try_recognize(cluster_strokes, level=1)
-            cluster_points = [p for s in cluster_strokes for p in s.points]
-            features.append(Feature(
+        SceneFeatures: List[SceneSceneFeature] = []
+        for cluster_id, cluster_points in enumerate(atomic_clusters):
+            result = self._try_recognize(cluster_points, level=1)
+            SceneFeatures.append(SceneSceneFeature(
                 cluster_id=cluster_id,
                 level=1,
                 result=result if result is not None else RecognitionResult(None, 0.0, math.inf),
                 points=cluster_points,
-                strokes=cluster_strokes,
             ))
-        return features
+        return SceneFeatures
 
-    def _compose_from_atomic(self, atomic_features: List[Feature],
+    def _compose_from_atomic(self, atomic_SceneFeatures: List[SceneSceneFeature],
                               level_merge_thresholds: Optional[Dict[int, float]] = None,
                               min_score: float = 0.0,
                               touch_cache: Optional[Dict[Tuple[int, int], bool]] = None
-                              ) -> List[Feature]:
+                              ) -> List[SceneSceneFeature]:
         """Handles Level 2+ composition ladder iteratively bundling lower levels."""
-        if not atomic_features or not self.templates:
+        if not atomic_SceneFeatures or not self.templates:
             return []
 
         thresholds = {**self.level_merge_thresholds, **(level_merge_thresholds or {})}
         levels_present = sorted({t.level for t in self.templates})
 
-        current_features = atomic_features
+        current_SceneFeatures = atomic_SceneFeatures
         for target_level in [lvl for lvl in levels_present if lvl != 1]:
             gap = thresholds.get(target_level, self.touch_threshold)
-            current_features = self._compose_level(current_features, target_level, gap, touch_cache)
+            current_SceneFeatures = self._compose_level(current_SceneFeatures, target_level, gap, touch_cache)
 
         return [
-            f for f in current_features
+            f for f in current_SceneFeatures
             if f.result.accepted and f.result.score >= min_score
         ]
 
-    def _compose_level(self, current_features: List[Feature], target_level: int,
+    def _compose_level(self, current_SceneFeatures: List[SceneSceneFeature], target_level: int,
                         gap: float, touch_cache: Optional[Dict[Tuple[int, int], bool]] = None
-                        ) -> List[Feature]:
-        """Groups features within a threshold and attempts recognition at `target_level`."""
-        groups = self._bundle_features_by_proximity(current_features, gap, touch_cache)
-        next_features: List[Feature] = []
+                        ) -> List[SceneSceneFeature]:
+        """Groups SceneFeatures within a threshold and attempts recognition at `target_level`."""
+        groups = self._bundle_SceneFeatures_by_proximity(current_SceneFeatures, gap, touch_cache)
+        next_SceneFeatures: List[SceneSceneFeature] = []
         
         for group in groups:
             total_units = sum(feat.level for feat in group)
 
             if len(group) > 1 and total_units == target_level:
-                combined_strokes = [s for feat in group for s in feat.strokes]
-                result = self._try_recognize(combined_strokes, level=target_level)
+                combined_points = [p for feat in group for p in feat.points]
+                result = self._try_recognize(combined_points, level=target_level)
 
                 if result is not None and result.accepted:
-                    combined_points = [p for feat in group for p in feat.points]
-                    next_features.append(Feature(
+                    next_SceneFeatures.append(SceneSceneFeature(
                         cluster_id=group[0].cluster_id,
                         level=target_level,
                         result=result,
                         points=combined_points,
-                        strokes=combined_strokes,
                         components=list(group),
                     ))
                     continue
 
-            next_features.extend(group)
+            next_SceneFeatures.extend(group)
 
-        return next_features
+        return next_SceneFeatures
 
-    def _bundle_features_by_proximity(self, features: List[Feature],
+    def _bundle_SceneFeatures_by_proximity(self, SceneFeatures: List[SceneSceneFeature],
                                        threshold: float,
                                        touch_cache: Optional[Dict[Tuple[int, int], bool]] = None
-                                       ) -> List[List[Feature]]:
-        """Groups scene features if any of their points fall within the spatial threshold."""
-        if not features:
+                                       ) -> List[List[SceneSceneFeature]]:
+        """Groups scene SceneFeatures if any of their points fall within the spatial threshold."""
+        if not SceneFeatures:
             return []
-        if len(features) == 1:
-            return [features]
+        if len(SceneFeatures) == 1:
+            return [SceneFeatures]
 
         def is_touching(i: int, j: int) -> bool:
-            feat_a, feat_b = features[i], features[j]
+            feat_a, feat_b = SceneFeatures[i], SceneFeatures[j]
             key = (id(feat_a), id(feat_b)) if id(feat_a) < id(feat_b) else (id(feat_b), id(feat_a))
             if touch_cache is not None:
                 if key in touch_cache:
@@ -425,12 +402,12 @@ class QRecognizer:
 
         search_radius = max(threshold, DEFAULT_ENDPOINT_TOUCH_THRESHOLD)
         index_clusters = cluster_func(
-            items=list(range(len(features))),
-            get_bbox_fn=lambda i: features[i].bounding_box(),
+            items=list(range(len(SceneFeatures))),
+            get_bbox_fn=lambda i: SceneFeatures[i].bounding_box(),
             is_touching_fn=is_touching,
             threshold=search_radius,
         )
-        return [[features[i] for i in sorted(idxs)] for idxs in index_clusters]
+        return [[SceneFeatures[i] for i in sorted(idxs)] for idxs in index_clusters]
         
     def _candidates_at_level(self, level: int, candidate_names: Optional[List[str]]) -> List[Template]:
         """Filters templates down to a given level and optional allow-list."""
@@ -441,10 +418,10 @@ class QRecognizer:
             raise ValueError(f"No templates registered at level={level} matching candidate names.")
         return candidates
         
-    def _try_recognize(self, strokes: List[Stroke], level: int) -> Optional[RecognitionResult]:
+    def _try_recognize(self, points: List[Point], level: int) -> Optional[RecognitionResult]:
         """Gracefully catches errors and returns None on invalid configurations."""
         try:
-            return self.recognize(strokes, level=level)
+            return self.recognize(points, level=level)
         except ValueError:
             return None
 
@@ -501,43 +478,29 @@ class QRecognizer:
     def _cloud_distance(self, cand_xs: np.ndarray, cand_ys: np.ndarray,
                        temp_xs: np.ndarray, temp_ys: np.ndarray,
                        lut: np.ndarray,
-                       penalty_threshold: Optional[float] = None,
-                       exponent: Optional[float] = None,
-                       max_dist_weight: Optional[float] = None) -> float:
-        """Fast Candidate -> Template point cloud distance via precalculated LUT.
-        Falls back to this instance's own cloud_distance_* settings when a
-        knob isn't explicitly overridden -- see __init__."""
+                       penalty_threshold: float = CLOUD_DISTANCE_PENALTY_THRESHOLD,
+                       exponent: float = CLOUD_DISTANCE_EXPONENT,
+                       max_dist_weight: float = CLOUD_DISTANCE_MAX_WEIGHT) -> float:
+        """Fast Candidate -> Template point cloud distance via precalculated LUT."""
         matched_idx = self._grid_lookup(cand_xs, cand_ys, lut)
         tx = temp_xs[matched_idx]
         ty = temp_ys[matched_idx]
         dists = np.hypot(cand_xs - tx, cand_ys - ty)
-        return self._blend_avg_max(
-            dists,
-            self.cloud_distance_penalty_threshold if penalty_threshold is None else penalty_threshold,
-            self.cloud_distance_exponent if exponent is None else exponent,
-            self.cloud_distance_max_weight if max_dist_weight is None else max_dist_weight,
-        )
+        return self._blend_avg_max(dists, penalty_threshold, exponent, max_dist_weight)
 
     def _reverse_cloud_distance(self,
                             temp_xs: np.ndarray, temp_ys: np.ndarray,
                             cand_xs: np.ndarray, cand_ys: np.ndarray,
                             candidate_lut: np.ndarray,
-                            penalty_threshold: Optional[float] = None,
-                            exponent: Optional[float] = None,
-                            max_dist_weight: Optional[float] = None) -> float:
-        """Computes Template -> Candidate distance using hybrid Hausdorff blending.
-        Falls back to this instance's own cloud_distance_* settings when a
-        knob isn't explicitly overridden -- see __init__."""
+                            penalty_threshold: float = CLOUD_DISTANCE_PENALTY_THRESHOLD,
+                            exponent: float = CLOUD_DISTANCE_EXPONENT,
+                            max_dist_weight: float = CLOUD_DISTANCE_MAX_WEIGHT) -> float:
+        """Computes Template -> Candidate distance using hybrid Hausdorff blending."""
         matched_idx = self._grid_lookup(temp_xs, temp_ys, candidate_lut)
         cx = cand_xs[matched_idx]
         cy = cand_ys[matched_idx]
         dists = np.hypot(temp_xs - cx, temp_ys - cy)
-        return self._blend_avg_max(
-            dists,
-            self.cloud_distance_penalty_threshold if penalty_threshold is None else penalty_threshold,
-            self.cloud_distance_exponent if exponent is None else exponent,
-            self.cloud_distance_max_weight if max_dist_weight is None else max_dist_weight,
-        )
+        return self._blend_avg_max(dists, penalty_threshold, exponent, max_dist_weight)
 
     @staticmethod
     def _blend_avg_max(dists: np.ndarray, penalty_threshold: float, exponent: float,
@@ -607,37 +570,16 @@ class QRecognizer:
     # Preprocessing Pipeline (Math & Resampling)
     # -------------------------------------------------------------------------
 
-    def _preprocess(self, strokes: List[Stroke], level: int = 1, already_merged: bool = False) -> List[Point]:
+    def _preprocess(self, points: List[Point], level: int = 1, already_merged: bool = False) -> List[Point]:
         """Geometric normalization pipeline: dedupe, resample, scale, and translate."""
-        strokes = strokes if already_merged else merge_intersecting_strokes(
-            strokes, proximity_threshold=self.touch_threshold, endpoint_threshold=self.endpoint_touch_threshold
+        pts = points if already_merged else merge_intersecting_strokes(
+            points, proximity_threshold=self.touch_threshold, endpoint_threshold=self.endpoint_touch_threshold
         )
-        pts, run_ids = self._flatten_with_run_ids(strokes)
-        pts, run_ids = self._dedupe(pts, run_ids)
-        pts = self._resample(pts, run_ids, self.n)
+        pts = self._dedupe(pts)
+        pts = self._resample(pts, self.n)
         pts = self._scale_uniform(pts, self.frame_size)
         pts = self._translate_to_origin(pts)
         return pts
-
-    @staticmethod
-    def _flatten_with_run_ids(strokes: List[Stroke]) -> Tuple[List[Point], List[int]]:
-        """
-        Flattens `strokes` into one point list plus a parallel "run id" per
-        point: points from the same Stroke share a run id. This is what
-        lets `_path_length`/`_resample` below tell "this pair of consecutive
-        points is a real drawn segment" (same run) from "this pair straddles
-        the break between two separate Stroke objects" (different run)
-        without Point needing any stroke identity of its own -- the run id
-        is derived on the fly from which Stroke each point actually lives
-        in, right here, and never stored on Point.
-        """
-        pts: List[Point] = []
-        run_ids: List[int] = []
-        for run_id, stroke in enumerate(strokes):
-            for p in stroke.points:
-                pts.append(p)
-                run_ids.append(run_id)
-        return pts, run_ids
 
     @staticmethod
     def _compute_aspect_ratio(points: List[Point]) -> float:
@@ -654,39 +596,33 @@ class QRecognizer:
         return math.atan2(h, w)
 
     @staticmethod
-    def _dedupe(points: List[Point], run_ids: List[int]) -> Tuple[List[Point], List[int]]:
-        """Removes consecutive duplicate points; `run_ids` is carried along in
-        lockstep so it stays aligned with whichever points survive."""
+    def _dedupe(points: List[Point]) -> List[Point]:
+        """Removes consecutive duplicate points."""
         if not points:
-            return [], []
-        out_pts = [points[0]]
-        out_runs = [run_ids[0]]
-        for p, r in zip(points[1:], run_ids[1:]):
-            if math.hypot(p.x - out_pts[-1].x, p.y - out_pts[-1].y) > 1e-9:
-                out_pts.append(p)
-                out_runs.append(r)
-        return out_pts, out_runs
+            return []
+        out = [points[0]]
+        for p in points[1:]:
+            if math.hypot(p.x - out[-1].x, p.y - out[-1].y) > 1e-9:
+                out.append(p)
+        return out
 
     @staticmethod
-    def _path_length(points: List[Point], run_ids: List[int]) -> float:
-        """Computes total path length ignoring gaps between distinct strokes
-        (consecutive points from different runs -- i.e. different original
-        Stroke objects -- don't contribute a segment)."""
+    def _path_length(points: List[Point]) -> float:
+        """Computes total path length ignoring gaps between distinct strokes."""
         d = 0.0
         for i in range(1, len(points)):
-            if run_ids[i] == run_ids[i - 1]:
+            if points[i].stroke_id == points[i - 1].stroke_id:
                 d += math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
         return d
 
-    def _resample(self, points: List[Point], run_ids: List[int], n: int) -> List[Point]:
+    def _resample(self, points: List[Point], n: int) -> List[Point]:
         """Resamples points evenly across geometric stroke paths."""
         if len(points) < 2:
             p = points[0] if points else Point(0.0, 0.0)
             return [p] * n
 
         pts = list(points)
-        runs = list(run_ids)
-        interval = self._path_length(pts, runs) / (n - 1)
+        interval = self._path_length(pts) / (n - 1)
         if interval <= 1e-9:
             return [pts[0]] * n
 
@@ -694,17 +630,17 @@ class QRecognizer:
         new_points = [pts[0]]
         i = 1
         while i < len(pts):
-            if runs[i] == runs[i - 1]:
+            if pts[i].stroke_id == pts[i - 1].stroke_id:
                 d = math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
                 if (D + d) >= interval:
                     t = (interval - D) / d
                     q = Point(
                         pts[i - 1].x + t * (pts[i].x - pts[i - 1].x),
                         pts[i - 1].y + t * (pts[i].y - pts[i - 1].y),
+                        pts[i].stroke_id
                     )
                     new_points.append(q)
                     pts.insert(i, q)
-                    runs.insert(i, runs[i])  # interpolated point belongs to the same run as its neighbors
                     D = 0.0
                 else:
                     D += d
@@ -727,7 +663,7 @@ class QRecognizer:
         """Scales points uniformly based on largest bounding dimension."""
         min_x, min_y, w, h = self._bounding_box(points)
         scale = size / max(w, h, 1e-9)
-        return [Point((p.x - min_x) * scale, (p.y - min_y) * scale) for p in points]
+        return [Point((p.x - min_x) * scale, (p.y - min_y) * scale, p.stroke_id) for p in points]
 
     @staticmethod
     def _centroid(points: List[Point]) -> Point:
@@ -739,4 +675,4 @@ class QRecognizer:
     def _translate_to_origin(self, points: List[Point]) -> List[Point]:
         """Translates point cloud centroid to the origin."""
         c = self._centroid(points)
-        return [Point(p.x - c.x, p.y - c.y) for p in points]
+        return [Point(p.x - c.x, p.y - c.y, p.stroke_id) for p in points]
