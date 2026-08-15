@@ -19,6 +19,7 @@ export_presets.cfg
 *.x86_64
 *.dmg
 *.zip
+*.tmp
 
 # Blender working files
 *.blend1
@@ -48,3 +49,6 @@ __pycache__/
 # spells images for training
 dataset/
 dataset_prep/
+
+# Jenova
+Jenova/

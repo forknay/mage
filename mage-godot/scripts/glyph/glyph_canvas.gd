@@ -25,6 +25,8 @@ var min_point_spacing := 4.0
 var _current := PackedVector2Array()
 var _stroke_open := false
 
+## Instance of your C++ Spell Engine
+var spell_engine: GodotSpellEngine = GodotSpellEngine.new()
 
 func begin_stroke() -> void:
 	_current = PackedVector2Array()
@@ -46,6 +48,9 @@ func add_point(point: Vector2, force := false) -> bool:
 func end_stroke() -> void:
 	if _stroke_open and _current.size() >= MIN_STROKE_POINTS:
 		strokes.append(_current)
+		print("allo")
+		spell_engine.add_stroke(_current)
+		
 	_current = PackedVector2Array()
 	_stroke_open = false
 
