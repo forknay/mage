@@ -82,7 +82,8 @@ Keep this list short. Every autoload is global state.
 | `move_forward` / `_back` / `_left` / `_right` | W A S D | |
 | `jump` | Space | |
 | `interact` | E | Raycast interactor (1.3.1) |
-| `draw` | Left mouse, **hold** | Opens the draw overlay and draws one stroke per hold; the overlay stays open between strokes |
+| `anchor` | Left ctrl, **hold** | Pins the draw canvas in the air so the crosshair can draw on it. Released, the canvas turns with the view instead, so a half-drawn glyph can be carried around |
+| `draw` | Left mouse, **hold** | Draws one stroke per hold, only while `anchor` is held; the canvas stays open between strokes |
 | `cast` | Right mouse | Commits every stroke drawn so far and fires the result |
 | `grimoire` | Tab, hold | Pattern reference (7.1) |
 | `pause` | Escape | **See the Escape rule below** |

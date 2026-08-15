@@ -14,6 +14,15 @@ extends MeshInstance3D
 @export var stroke_color := Color(0.55, 0.85, 1.0)
 ## Colour of the stroke currently under the pen, so it reads as "live".
 @export var active_color := Color(1.0, 0.95, 0.7)
+## Whether the glyph draws over everything in the way.
+##
+## True for the caster: their own glyph must never be swallowed by a wall or an
+## enemy that wanders between them and the canvas, because they are steering by
+## it. False is the view every *other* player gets at beta -- the strokes are
+## ordinary world geometry sitting on the canvas either way, so a remote viewer
+## sees the same glyph in the same place, just occluded normally. Read once at
+## _ready.
+@export var always_on_top := true
 
 var _plane: GlyphPlane
 var _mesh := ImmediateMesh.new()
@@ -34,6 +43,17 @@ func _make_material(color: Color) -> StandardMaterial3D:
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	material.albedo_color = color
+
+	if always_on_top:
+		# Depth testing off alone is not enough: an opaque surface drawn later
+		# would still paint over the glyph. Moving it into the transparent pass
+		# at max priority puts it last, after all opaque geometry, and dropping
+		# depth writes keeps it from occluding itself where strokes cross.
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.no_depth_test = true
+		material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+		material.render_priority = Material.RENDER_PRIORITY_MAX
+
 	return material
 
 
@@ -62,6 +82,8 @@ func _add_stroke(stroke: PackedVector2Array, material: StandardMaterial3D) -> vo
 	if stroke.size() < 2:
 		return
 
+	var normal := _plane.transform.basis.z
+
 	_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES, material)
 	for i in stroke.size() - 1:
 		var a := _plane.to_world(stroke[i])
@@ -75,8 +97,8 @@ func _add_stroke(stroke: PackedVector2Array, material: StandardMaterial3D) -> vo
 		# ribbon collapses to a sliver as the head turns away from the canvas;
 		# the perpendicular quad keeps the stroke solid from any angle, which
 		# is what sells it as drawn in the air rather than pasted on a plane.
-		var side := along.cross(_plane.normal).normalized() * stroke_radius
-		var deep := _plane.normal * stroke_radius
+		var side := along.cross(normal).normalized() * stroke_radius
+		var deep := normal * stroke_radius
 		_add_quad(a - side, b - side, b + side, a + side)
 		_add_quad(a - deep, b - deep, b + deep, a + deep)
 	_mesh.surface_end()

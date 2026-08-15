@@ -29,6 +29,3 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 0)
 
 [node name="SpellCaster" parent="." node_paths=PackedStringArray("camera") instance=ExtResource("2_caster")]
 camera = NodePath("../Head/Camera3D")
-
-[connection signal="draw_ended" from="SpellCaster" to="." method="_on_draw_ended"]
-[connection signal="draw_started" from="SpellCaster" to="." method="_on_draw_started"]

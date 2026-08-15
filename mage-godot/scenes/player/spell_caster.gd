@@ -2,19 +2,21 @@ extends Node3D
 
 ## Freeform glyph drawing.
 ##
-## Holding `draw` (left mouse) opens a canvas anchored in the air in front of
-## the player and starts a stroke; the crosshair is the pen, so the player
-## draws by looking. Releasing ends the stroke but keeps the canvas open, so a
-## glyph can be several strokes. Pressing `cast` (right mouse) commits
-## everything drawn, Escape throws it away.
+## Holding `anchor` (left ctrl) pins a canvas in the air in front of the
+## player. While it is pinned, holding `draw` (left mouse) lays down a stroke:
+## the crosshair is the pen, so the player draws by looking. Releasing `draw`
+## ends the stroke but keeps the canvas open, so a glyph can be several
+## strokes. Pressing `cast` (right mouse) commits everything drawn, Escape
+## throws it away.
 ##
-## Movement is announced, not reached into: the player listens for
-## draw_started / draw_ended and locks itself (conventions.md, ADR 0002 rule 1).
+## Let go of `anchor` and the canvas travels with the view instead, so the
+## player can turn right around and carry a half-finished glyph with them. The
+## pen cannot draw in that state -- the crosshair is stuck at the centre of a
+## canvas that turns with it -- which is what keeps the two modes distinct.
+##
+## Walking, jumping and falling stay available throughout: the canvas rides
+## along with the eye either way, so travelling never smears a stroke.
 
-## The player is now drawing and should stop moving.
-signal draw_started
-## Emitted on both commit and cancel -- movement resumes either way.
-signal draw_ended
 ## A finished glyph, batched by stroke, in $Q canvas coordinates.
 signal glyph_drawn(strokes: Array[PackedVector2Array])
 
@@ -60,7 +62,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		return
 
-	if event.is_action_pressed("draw"):
+	# A click with the canvas unpinned is not a stroke, and is left unhandled so
+	# it can still serve as the click that recaptures the mouse.
+	if event.is_action_pressed("draw") and Input.is_action_pressed("anchor"):
 		_press_pen()
 		get_viewport().set_input_as_handled()
 	elif event.is_action_released("draw") and _pen_down:
@@ -74,9 +78,11 @@ func _unhandled_input(event: InputEvent) -> void:
 func _process(_delta: float) -> void:
 	if not _drawing:
 		return
-	# The canvas rides along with the eye, so a shove or a fall moves the whole
-	# glyph instead of dragging a line across it.
-	_plane.follow(camera.global_position)
+	# A stroke in progress holds the pin even after `anchor` is let go --
+	# unpinning mid-stroke would whip a line across the canvas -- so the
+	# release takes effect once the pen lifts.
+	_plane.carry(camera.global_transform, _pen_down or Input.is_action_pressed("anchor"))
+
 	if _pen_down:
 		_sample_pen()
 	# Cheap enough to rebuild every frame, and it means the ribbon can never be
@@ -112,7 +118,6 @@ func _begin() -> void:
 	_canvas.clear()
 	_plane = GlyphPlane.anchored_at(camera.global_transform, canvas_distance, canvas_width)
 	_overlay.begin(_plane)
-	draw_started.emit()
 
 
 func _commit() -> void:
@@ -137,7 +142,6 @@ func _close() -> void:
 	_drawing = false
 	_pen_down = false
 	_overlay.clear()
-	draw_ended.emit()
 
 
 func _fire_placeholder() -> void:

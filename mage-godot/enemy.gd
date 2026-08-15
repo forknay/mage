@@ -16,31 +16,28 @@ signal player_lost
 @export var memory_time := 3.0
 ## How fast the enemy turns to face where it is going, in radians per second.
 @export var turn_speed := 6.0
+## How fast the enemy sweeps its view while it has nowhere to go, in radians
+## per second of sweep phase.
+@export var scan_speed := 1.2
+## How far to either side the enemy sweeps while scanning, in degrees.
+@export var scan_arc := 140.0
 ## Horizontal distance that counts as touching the player.
 @export var contact_distance := 1.2
-## Colour shown while in contact with the player.
-@export var contact_color := Color(0.9, 0.75, 0.2)
 ## Layers the sight ray tests against. Deliberately excludes the enemy layer so
 ## that enemies never block each other's view of the player.
 @export_flags_3d_physics var sight_mask := 1 | 2
 
 @onready var nav_agent: NavigationAgent3D = $NavigationAgent3D
-@onready var mesh: MeshInstance3D = $MeshInstance3D
 
 var player: Node3D
 var time_since_seen := INF
 var touching_player := false
-var material: StandardMaterial3D
-var idle_color: Color
+var scanning := false
+var scan_center_yaw := 0.0
+var scan_phase := 0.0
 
 
 func _ready() -> void:
-	# Every instance of this scene shares one material, so it has to be
-	# duplicated before tinting or all the enemies change colour together.
-	material = mesh.get_active_material(0).duplicate()
-	mesh.material_override = material
-	idle_color = material.albedo_color
-
 	player = get_tree().get_first_node_in_group("player")
 	# The navigation map is only synced after the first physics frame, so any
 	# path query before that returns garbage.
@@ -50,7 +47,8 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if can_see_player():
+	var sees_player := can_see_player()
+	if sees_player:
 		time_since_seen = 0.0
 		# Only refreshed while visible, so losing sight sends the enemy to the
 		# spot where it last saw the player rather than to the player.
@@ -60,15 +58,31 @@ func _physics_process(delta: float) -> void:
 
 	# Vertical velocity is passed through untouched; avoidance steers x and z.
 	var desired := Vector3(0.0, velocity.y, 0.0)
+	var move_direction := Vector3.ZERO
 
 	if time_since_seen < memory_time and not nav_agent.is_navigation_finished():
 		var next_location := nav_agent.get_next_path_position()
-		var direction := next_location - global_position
-		direction.y = 0.0
-		direction = direction.normalized()
-		desired.x = direction.x * speed
-		desired.z = direction.z * speed
-		face_direction(direction, delta)
+		move_direction = next_location - global_position
+		move_direction.y = 0.0
+		move_direction = move_direction.normalized()
+		desired.x = move_direction.x * speed
+		desired.z = move_direction.z * speed
+
+	# The vision cone is attached to the body's facing, so the enemy must keep
+	# turning even when it has stopped walking. Otherwise its cone freezes in
+	# whatever direction the last step happened to aim and the player can only
+	# ever be re-acquired inside that one wedge.
+	if sees_player:
+		# Keep watching the player even after arriving, so that circling a
+		# stationary enemy does not quietly drop out of its cone.
+		var to_player := player.global_position - global_position
+		face_direction(Vector3(to_player.x, 0.0, to_player.z).normalized(), delta)
+		scanning = false
+	elif not move_direction.is_zero_approx():
+		face_direction(move_direction, delta)
+		scanning = false
+	else:
+		scan(delta)
 
 	if nav_agent.avoidance_enabled:
 		# Hand the intended velocity to the avoidance solver. It answers on
@@ -108,16 +122,14 @@ func update_contact() -> void:
 		_on_player_lost()
 
 
-## Called once when the enemy reaches the player. Replace the colour swap with
-## whatever the enemy should actually do: damage, an attack animation, etc.
+## Called once when the enemy reaches the player. Nothing happens here yet;
+## `touching_player` is tracked so damage or an attack animation can hang off it.
 func _on_player_reached() -> void:
-	material.albedo_color = contact_color
 	player_reached.emit()
 
 
 ## Called once when the player escapes contact range again.
 func _on_player_lost() -> void:
-	material.albedo_color = idle_color
 	player_lost.emit()
 
 
@@ -145,6 +157,18 @@ func can_see_player() -> bool:
 	)
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	return not hit.is_empty() and hit.collider == player
+
+
+## Sweeps the vision cone back and forth while the enemy is standing still, so
+## that a lost player can be spotted again. The sweep is centred on whichever
+## way the enemy was facing when it stopped.
+func scan(delta: float) -> void:
+	if not scanning:
+		scanning = true
+		scan_center_yaw = rotation.y
+		scan_phase = 0.0
+	scan_phase += scan_speed * delta
+	rotation.y = scan_center_yaw + sin(scan_phase) * deg_to_rad(scan_arc) * 0.5
 
 
 func face_direction(direction: Vector3, delta: float) -> void:

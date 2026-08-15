@@ -6,10 +6,6 @@ extends CharacterBody3D
 
 @onready var head: Node3D = $Head
 
-## Set while the spell caster has the drawing canvas open. Looking around stays
-## free -- the crosshair is the pen.
-var _movement_locked := false
-
 
 func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -31,12 +27,10 @@ func _physics_process(delta: float) -> void:
 	if not is_on_floor():
 		velocity += get_gravity() * delta
 
-	if Input.is_action_just_pressed("jump") and is_on_floor() and not _movement_locked:
+	if Input.is_action_just_pressed("jump") and is_on_floor():
 		velocity.y = jump_velocity
 
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-	if _movement_locked:
-		input_dir = Vector2.ZERO
 	var direction := (transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)).normalized()
 	if direction:
 		velocity.x = direction.x * speed
@@ -46,11 +40,3 @@ func _physics_process(delta: float) -> void:
 		velocity.z = move_toward(velocity.z, 0.0, speed)
 
 	move_and_slide()
-
-
-func _on_draw_started() -> void:
-	_movement_locked = true
-
-
-func _on_draw_ended() -> void:
-	_movement_locked = false
