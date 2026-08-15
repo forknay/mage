@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://drviy2yn6cgwb"]
 
 [ext_resource type="Script" uid="uid://0k625rg10r7x" path="res://main.gd" id="1_h2yge"]
-[ext_resource type="PackedScene" path="res://player.tscn" id="1_player"]
+[ext_resource type="PackedScene" uid="uid://dki8hk32xo7fy" path="res://player.tscn" id="1_player"]
 [ext_resource type="MeshLibrary" uid="uid://1udhi3yg0o5p" path="res://tileset.tres" id="2_0xm2m"]
 [ext_resource type="PackedScene" uid="uid://bnex0kfkhs3g8" path="res://enemy.tscn" id="4_1bvp3"]
 
