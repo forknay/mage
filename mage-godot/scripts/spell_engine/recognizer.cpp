@@ -7,12 +7,26 @@
 #include <numeric>
 #include <set>
 #include <stdexcept>
+#include <JenovaSDK.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 namespace qrec {
+
+namespace {
+// ---------------------------------------------------------------------------
+// TEMP DEBUG SWITCH
+// ---------------------------------------------------------------------------
+// While `true`, every recognition that found *any* best-matching template is
+// treated as accepted, regardless of how low its score was against that
+// template's min_score. This exists purely so features/spells surface while
+// you're iterating on templates, without also having to fight min_score
+// tuning at the same time. Flip back to `false` once you're done debugging
+// -- shipping with this on means the recognizer accepts literally anything.
+constexpr bool kDisableRecognitionThreshold = false;
+}  // namespace
 
 // =============================================================================
 // Construction
@@ -114,7 +128,7 @@ void QRecognizer::add_precomputed_template(const std::string& name, const std::v
 RecognitionResult QRecognizer::recognize(const std::vector<Stroke>& strokes, int level,
 										  const std::vector<std::string>* candidate_names) const {
 	if (templates_.empty()) {
-		throw std::invalid_argument("No templates registered.");
+		jenova::sdk::Output("recognize: no templates registered");
 	}
 
 	auto candidates = candidates_at_level(level, candidate_names);
@@ -122,6 +136,7 @@ RecognitionResult QRecognizer::recognize(const std::vector<Stroke>& strokes, int
 	auto [merged_strokes, actual_units] = merge_and_count_touch_units(strokes, touch_threshold_, endpoint_touch_threshold_);
 
 	if (actual_units != level) {
+		jenova::sdk::Output("recognize: cannot classify at level=%d: input has %d units", level, actual_units);
 		throw std::invalid_argument("Cannot classify at level=" + std::to_string(level) + ": input has " +
 									 std::to_string(actual_units) + " units.");
 	}
@@ -141,7 +156,8 @@ RecognitionResult QRecognizer::recognize(const std::vector<Stroke>& strokes, int
 	}
 	result.score = best_score;
 	result.distance = best_distance;
-	result.accepted = (best_template != nullptr) && (best_score >= best_template->min_score);
+	result.accepted = (best_template != nullptr) && (kDisableRecognitionThreshold || best_score >= best_template->min_score);
+	jenova::sdk::Output("recognize: best_template: %s", best_template ? best_template->name.c_str() : "none");
 	return result;
 }
 
@@ -257,6 +273,21 @@ std::vector<std::shared_ptr<Feature>> QRecognizer::add_stroke(const Stroke& stro
 	remaining_groups.push_back(std::move(new_group));
 
 	groups_ = std::move(remaining_groups);
+	for (const auto& g : groups_) {
+		for (const auto& f : g.features) {
+			f->cluster_id = static_cast<int>(&g - &groups_[0]);
+		}
+	}
+	jenova::sdk::Output("Feature recognized:");
+	for (const auto& g : groups_) {
+		for (const auto& f : g.features) {
+			if (f->result.name.has_value()) {
+				std::string line = f->result.name.value() + " (score=" + std::to_string(f->result.score) + ")";
+				jenova::sdk::Output(line.c_str());
+			}
+		}
+	}
+
 	return features();
 }
 
