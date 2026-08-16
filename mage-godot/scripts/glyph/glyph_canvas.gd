@@ -76,3 +76,4 @@ func clear() -> void:
 	strokes = []
 	_current = PackedVector2Array()
 	_stroke_open = false
+	spell_engine.clear()
