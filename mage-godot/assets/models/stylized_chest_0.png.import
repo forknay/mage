@@ -2,20 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dctdag7ix522f"
-path.s3tc="res://.godot/imported/slime_low-poly_0.png-afd9fa6ed22d7778fe17bfb2edb0c6d7.s3tc.ctex"
+uid="uid://ci6ybxct5fxmc"
+path.s3tc="res://.godot/imported/stylized_chest_0.png-554f9fec99f4c4d716f32d541831d827.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
 generator_parameters={
-"md5": "98192ea7bc24d740efce212c8fe7e251"
+"md5": "6b11bbb12cebc5c5c38b9654802fbba9"
 }
 
 [deps]
 
-source_file="res://slime_low-poly_0.png"
-dest_files=["res://.godot/imported/slime_low-poly_0.png-afd9fa6ed22d7778fe17bfb2edb0c6d7.s3tc.ctex"]
+source_file="res://assets/models/stylized_chest_0.png"
+dest_files=["res://.godot/imported/stylized_chest_0.png-554f9fec99f4c4d716f32d541831d827.s3tc.ctex"]
 
 [params]
 

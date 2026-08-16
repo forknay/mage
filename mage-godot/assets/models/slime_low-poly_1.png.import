@@ -2,35 +2,34 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://d0livxbauiig3"
-path.s3tc="res://.godot/imported/tileset_atlas_n.png-cc9d3644dec522556533df63d197529e.s3tc.ctex"
+uid="uid://dw5j8cg8dcp5b"
+path="res://.godot/imported/slime_low-poly_1.png-c839586bff28a0f0ca8f34abbd5894d3.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
-"vram_texture": true
+"vram_texture": false
 }
 generator_parameters={
-"md5": "dea5a45d068157671568f557cec278d0"
+"md5": "4bee7cd5cb280e0fc8700d9ff27b124d"
 }
 
 [deps]
 
-source_file="res://tileset_atlas_n.png"
-dest_files=["res://.godot/imported/tileset_atlas_n.png-cc9d3644dec522556533df63d197529e.s3tc.ctex"]
+source_file="res://assets/models/slime_low-poly_1.png"
+dest_files=["res://.godot/imported/slime_low-poly_1.png-c839586bff28a0f0ca8f34abbd5894d3.ctex"]
 
 [params]
 
-compress/mode=2
+compress/mode=0
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
 compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
-compress/normal_map=1
+compress/normal_map=0
 compress/channel_pack=0
 mipmaps/generate=true
 mipmaps/limit=-1
-roughness/mode=1
-roughness/src_normal="res://tileset_atlas_n.png"
+roughness/mode=0
+roughness/src_normal=""
 process/channel_remap/red=0
 process/channel_remap/green=1
 process/channel_remap/blue=2
@@ -41,4 +40,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=0
+detect_3d/compress_to=1

@@ -1,5 +1,5 @@
 [gd_scene format=3 uid="uid://dh2t5kvoup3eo"]
 
-[ext_resource type="PackedScene" uid="uid://dwii4c1ahngn8" path="res://tileset.glb" id="1_2ap32"]
+[ext_resource type="PackedScene" uid="uid://dwii4c1ahngn8" path="res://assets/models/tileset.glb" id="1_2ap32"]
 
 [node name="tileset" unique_id=1088776064 instance=ExtResource("1_2ap32")]

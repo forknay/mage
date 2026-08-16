@@ -2,20 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://ci6ybxct5fxmc"
-path.s3tc="res://.godot/imported/stylized_chest_0.png-a329b3981c4d3551a42f5a2325bc9b0a.s3tc.ctex"
+uid="uid://c54nku5rcp35p"
+path.s3tc="res://.godot/imported/tileset_atlas.png-9fbf1bb3db20581b225c91d20920a941.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
 generator_parameters={
-"md5": "6b11bbb12cebc5c5c38b9654802fbba9"
+"md5": "5c69e623c883dcc11d160baccc5361dd"
 }
 
 [deps]
 
-source_file="res://stylized_chest_0.png"
-dest_files=["res://.godot/imported/stylized_chest_0.png-a329b3981c4d3551a42f5a2325bc9b0a.s3tc.ctex"]
+source_file="res://assets/models/tileset_atlas.png"
+dest_files=["res://.godot/imported/tileset_atlas.png-9fbf1bb3db20581b225c91d20920a941.s3tc.ctex"]
 
 [params]
 

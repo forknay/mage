@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://day63peiciw2p"
-path="res://.godot/imported/stylized_chest.glb-89dded4bb2456a7ae43cc2c708bc89e8.scn"
+uid="uid://3hghnlw3vqk1"
+path="res://.godot/imported/low_poly_torches.glb-e7d9981628e2ff328fc32be2155a3a97.scn"
 
 [deps]
 
-source_file="res://stylized_chest.glb"
-dest_files=["res://.godot/imported/stylized_chest.glb-89dded4bb2456a7ae43cc2c708bc89e8.scn"]
+source_file="res://assets/models/low_poly_torches.glb"
+dest_files=["res://.godot/imported/low_poly_torches.glb-e7d9981628e2ff328fc32be2155a3a97.scn"]
 
 [params]
 
