@@ -135,8 +135,10 @@ func _commit() -> void:
 	_close()
 	glyph_drawn.emit(strokes)
 
-	# Recognition goes here: feed `strokes` to the GDScript port of
-	# spell_recognizer_2 and resolve the SpellData it returns (ADR 0002). Until
+	# Recognition has already happened -- the engine sees each stroke as it is
+	# finished (GlyphCanvas.end_stroke), so by now it holds the features and
+	# could name the spell. What is missing is the other half of ADR 0002:
+	# turn `spell_engine.match_spell()` into a SpellData and resolve it. Until
 	# that exists, every glyph fires the same placeholder bolt.
 	_fire_placeholder()
 

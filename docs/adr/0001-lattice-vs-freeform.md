@@ -1,8 +1,29 @@
 # ADR 0001 — Lattice recognition, not freeform
 
-**Status:** Accepted (masterplan 0.2.1) · **Date:** 2026-07-25
-**Revisit at:** spikes P1 and P3 — these can still overturn it, and nothing
-downstream should be built until they clear.
+**Status:** ~~Accepted~~ **Overtaken by the implementation** (2026-08-16) ·
+**Date:** 2026-07-25
+
+> **This decision was reversed in code, not on paper.** What is on `main`
+> is freeform: unconstrained strokes on a world-space canvas, classified by
+> an orientation-sensitive $Q point-cloud recognizer written in C++ and
+> built by Jenova, with spells defined as *layouts* of recognised shapes.
+> See [`docs/design/spells.md`](../design/spells.md) for how it actually
+> works.
+>
+> The record below is kept because it is still the clearest statement of
+> what freeform costs — every risk it names (threshold-vs-collision, "the
+> parser ate my spell", onboarding by shape rather than by memory) is now a
+> live concern rather than an avoided one, and `min_score` tuning is exactly
+> the lever it warned about. **Why the team switched is not recorded
+> anywhere**; a successor ADR should capture it while the reasoning is still
+> in someone's head.
+>
+> Nothing below describes shipped behaviour. In particular the lattice
+> tooling it relies on — `proto/glyph_core.js`, `find_pattern.js`, the
+> separation matrix — is no longer part of the pipeline.
+
+**Original revisit condition:** spikes P1 and P3 — these can still overturn
+it, and nothing downstream should be built until they clear.
 
 ## Context
 

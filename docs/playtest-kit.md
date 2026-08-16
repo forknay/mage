@@ -18,8 +18,10 @@ Two strangers minimum. "Stranger" means:
 - Plays games, but is **not a developer** — developers debug instead of
   playing, and narrate what they think you want to hear
 
-Do not use: teammates, anyone who has drawn a single glyph in the spikes,
-or anyone who already knows the word "lattice." Their data is spent.
+Do not use: teammates, anyone who has drawn a single glyph in the spikes or
+the spell tester, or anyone who has been told which shapes the recognizer
+knows. Their data is spent — recognition testing needs a hand the templates
+were not captured from.
 
 Recruit **before** the build is ready. Chasing testers with a finished
 build is how 8.4 slips a week.
@@ -92,36 +94,35 @@ short answers.
 
 4. **How well did the game do what you told it to?**
    *1 (constantly misread me) – 5 (always did what I meant).*
-   *This is the lattice bet in one number. Cross-check it against the
-   telemetry hit rate — a gap between felt and actual accuracy is itself a
-   finding.*
+   *This is the recognition bet in one number, and on freeform input it is
+   the single most important question on the form. Cross-check it against
+   the telemetry hit rate — a gap between felt and actual accuracy is itself
+   a finding.*
 
 5. **Would you play a longer version? What would you want more of?**
 
 ## 5. Telemetry analysis
 
 The 3.2.5 CSV is the point of the whole exercise — it turns 8.4 from
-anecdote into arithmetic. Columns:
-`pattern, matched_spell, draw_time_ms, edges, fumbles, power, fizzled`.
+anecdote into arithmetic. Columns are not fixed yet (the telemetry row
+follows `SpellData`, which is unwritten — ADR 0002), but on freeform input
+they need to carry at least:
+`matched_spell, features_recognised, best_score, stroke_count, draw_time_ms, fizzled`.
 
 Run these, in this order:
 
 | Question | Calculation | Threshold |
 |---|---|---|
 | Overall hit rate | `matched / total` | **≥ 70%** (exit criterion 2) |
-| Per-pattern hit rate | group by intended pattern | any pattern < 60% is broken, not the player |
-| Median draw time | `median(draw_time_ms)` for hits | compare to spike P1's number |
-| Drift from P1 | in-game median vs P1 median | large gap means the 3D overlay costs more than the flat harness did |
-| Fumbles per cast | `mean(fumbles)` | > 2 means snap radius is too small |
-| Power distribution | histogram of `power` | clustering at the 0.4 floor means par times are too aggressive |
+| Per-spell hit rate | group by intended spell | any spell < 60% is broken, not the player |
+| Median draw time | `median(draw_time_ms)` for hits | no baseline yet — P1 measured lattice tracing, so this run sets the number |
+| Near-misses | rows where a feature was recognised but no spell matched | high here means the *layout* rules are too tight, not the shapes |
+| Score distribution | histogram of `best_score` against each `min_score` | a cluster just under a threshold is a tuning fix; a spread across the range is a template problem |
+| Strokes per cast | `mean(stroke_count)` vs the glyph's real stroke count | consistently high means strokes are breaking up mid-draw |
 
-**If hit rate is below 70%,** apply the dials in this order — cheapest and
-least destructive first:
-
-1. Increase snap radius
-2. Coarsen the lattice
-3. Shorten patterns (re-run `find_pattern.js`, keep separation ≥ 2)
-4. Promote the grimoire to permanent HUD hints
+**If hit rate is below 70%,** apply the dials from
+`docs/alpha-exit-criteria.md` §2 — cheapest and least destructive first, and
+verify each one in the tester before the next playtest.
 
 Change **one** thing, then re-test. Changing three at once means learning
 nothing from a second playtest.
@@ -133,9 +134,10 @@ the page to private/password-protected for an alpha.*
 
 > ### Mage — alpha
 >
-> A first-person dungeon crawler where every spell is a sigil you trace by
-> hand. Hold right-click, draw the pattern on the lattice, release. Draw it
-> fast and clean and it hits harder.
+> A first-person dungeon crawler where every spell is a sigil you draw by
+> hand, in the air, while things are running at you. Hold ctrl to hang a
+> canvas in front of you, hold left-click and draw with your crosshair,
+> right-click to cast.
 >
 > Four spells, one dungeon, one miniboss. About 15 minutes.
 >

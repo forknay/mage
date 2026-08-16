@@ -1,6 +1,23 @@
 # ADR 0002 — Spells resolve through a data struct
 
-**Status:** Accepted (masterplan 0.2.2) · **Date:** 2026-07-25
+**Status:** Accepted (masterplan 0.2.2) · **Date:** 2026-07-25 ·
+**Not yet implemented** (checked 2026-08-16)
+
+> **Implementation status.** `SpellData` and `resolve_spell()` do not exist
+> yet. Recognition works and `GodotSpellEngine.match_spell()` returns a
+> spell name, but nothing calls it: `spell_caster._commit()` fires the same
+> placeholder bolt for every glyph, so no cast currently produces an effect
+> to route through anything.
+>
+> The decision still stands, but three of the fields below were lattice
+> concepts and have no freeform equivalent: `signature` (there is no
+> canonical pattern hash — the closest thing is the matched spell name plus
+> the recognizer's per-feature scores), and `speed` / `economy` (there are
+> no edges to count and no fumbles to record). `power` therefore has no
+> agreed formula; the recognizer's 0–1 match score is the obvious raw
+> material but nothing has been decided. Settle that when the struct is
+> actually written, and amend this ADR then rather than inventing the
+> fields in advance. See [`docs/design/spells.md`](../design/spells.md).
 
 ## Context
 
@@ -84,5 +101,7 @@ what makes that change feasible at all.
 
 ## Notes
 
-`proto/glyph_core.js` `recognize()` already returns this shape. Its return
-value is the reference for the GDScript port — keep the field names.
+`proto/glyph_core.js` `recognize()` returns this shape, and was written as
+the reference for a GDScript port that never happened — recognition is now
+freeform and lives in C++ (`scripts/spell_engine/`), so those field names
+are a starting point rather than a contract to match.

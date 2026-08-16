@@ -1,0 +1,3 @@
+# Build output. (*.exe is already ignored repo-wide.)
+obj/
+*.o
