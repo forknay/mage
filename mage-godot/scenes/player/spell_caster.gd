@@ -35,6 +35,7 @@ signal glyph_drawn(strokes: Array[PackedVector2Array])
 @export var muzzle_offset: float = 0.8
 
 @onready var _overlay: DrawOverlay = $DrawOverlay
+@onready var _readout: RecognitionReadout = $RecognitionReadout
 
 var _canvas: GlyphCanvas = GlyphCanvas.new()
 var _plane: GlyphPlane
@@ -101,6 +102,10 @@ func _press_pen() -> void:
 func _release_pen() -> void:
 	_pen_down = false
 	_canvas.end_stroke()
+	# Recognition only runs on finished strokes, so this is the moment the
+	# answer changes. Naming it on screen keeps a testing session inside the
+	# game window instead of in the engine's terminal log.
+	_readout.show_features(_canvas.recognized_features())
 
 
 ## Reads the crosshair against the canvas and records where it lands. Rays that

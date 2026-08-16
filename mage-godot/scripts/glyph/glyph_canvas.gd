@@ -49,11 +49,20 @@ func add_point(point: Vector2, force: bool = false) -> bool:
 func end_stroke() -> void:
 	if _stroke_open and _current.size() >= MIN_STROKE_POINTS:
 		strokes.append(_current)
-		print("allo")
 		spell_engine.add_stroke(_current)
 
 	_current = PackedVector2Array()
 	_stroke_open = false
+
+
+## What the engine currently recognises on the canvas, one Dictionary per
+## feature: {name, score, min_score, level, center}. The engine only keeps a
+## feature once it has cleared its template's min_score, so everything in here
+## was recognised with enough certainty -- there is no confidence filtering to
+## do on this side. Recomputed on every add_stroke, so this grows and changes
+## as the glyph is drawn; it is empty again after clear().
+func recognized_features() -> Array:
+	return spell_engine.get_features()
 
 
 ## The stroke being drawn right now, empty when the pen is up. Rendering needs

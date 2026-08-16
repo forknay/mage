@@ -1,0 +1,22 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scenes/player/recognition_readout.gd" id="1_readout"]
+
+[sub_resource type="LabelSettings" id="LabelSettings_readout"]
+font_size = 8
+font_color = Color(1, 0.95, 0.7, 1)
+outline_size = 3
+outline_color = Color(0, 0, 0, 0.7)
+
+[node name="RecognitionReadout" type="CanvasLayer"]
+layer = 10
+script = ExtResource("1_readout")
+
+[node name="Label" type="Label" parent="."]
+anchors_preset = 10
+anchor_right = 1.0
+offset_top = 6.0
+offset_bottom = 60.0
+grow_horizontal = 2
+horizontal_alignment = 1
+label_settings = SubResource("LabelSettings_readout")

@@ -1,4 +1,5 @@
 #include "scripts/spell_engine/godot_spell_engine.hpp"
+#include <array>
 #include <iostream>
 // Jenova SDK (needed for sakura:: hot-reload hooks and JENOVA_ACTIVATOR)
 #include <JenovaSDK.h>
@@ -9,6 +10,7 @@ void GodotSpellEngine::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_stroke", "points"), &GodotSpellEngine::add_stroke);
 	ClassDB::bind_method(D_METHOD("match_spell"), &GodotSpellEngine::match_spell);
 	ClassDB::bind_method(D_METHOD("clear"), &GodotSpellEngine::clear);
+	ClassDB::bind_method(D_METHOD("get_features"), &GodotSpellEngine::get_features);
 }
 
 GodotSpellEngine::GodotSpellEngine() {}
@@ -34,6 +36,29 @@ String GodotSpellEngine::match_spell() const {
 
 void GodotSpellEngine::clear() {
 	engine_.clear();
+}
+
+Array GodotSpellEngine::get_features() const {
+	Array out;
+	for (const auto &feature : engine_.recognizer().features()) {
+		// A feature with no name never matched a template at all, so there
+		// is nothing to name on screen.
+		if (!feature->result.name.has_value()) {
+			continue;
+		}
+		// (min_x, max_x, min_y, max_y) -- see Feature::bounding_box.
+		const std::array<double, 4> &box = feature->bounding_box();
+
+		Dictionary entry;
+		entry["name"] = String(feature->result.name->c_str());
+		entry["score"] = feature->result.score;
+		entry["min_score"] = feature->result.min_score;
+		entry["level"] = feature->level;
+		entry["center"] = Vector2(static_cast<float>((box[0] + box[1]) * 0.5),
+								  static_cast<float>((box[2] + box[3]) * 0.5));
+		out.push_back(entry);
+	}
+	return out;
 }
 
 } // namespace godot
