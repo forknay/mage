@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://ge7l4g8qp2jf"
-path="res://.godot/imported/slime_low-poly.glb-360ebb601ff8a3e5dadf37a5efd8bf41.scn"
+uid="uid://dwii4c1ahngn8"
+path="res://.godot/imported/tileset.glb-93f6c9b9241bd0ad5ba0609bcf3521e1.scn"
 
 [deps]
 
-source_file="res://slime_low-poly.glb"
-dest_files=["res://.godot/imported/slime_low-poly.glb-360ebb601ff8a3e5dadf37a5efd8bf41.scn"]
+source_file="res://assets/models/tileset.glb"
+dest_files=["res://.godot/imported/tileset.glb-93f6c9b9241bd0ad5ba0609bcf3521e1.scn"]
 
 [params]
 

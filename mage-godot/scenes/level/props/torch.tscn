@@ -1,7 +1,7 @@
 [gd_scene load_steps=5 format=3]
 
-[ext_resource type="PackedScene" uid="uid://3hghnlw3vqk1" path="res://low_poly_torches.glb" id="1_torch"]
-[ext_resource type="Script" path="res://scenes/props/torch.gd" id="2_flicker"]
+[ext_resource type="PackedScene" uid="uid://3hghnlw3vqk1" path="res://assets/models/low_poly_torches.glb" id="1_torch"]
+[ext_resource type="Script" path="res://scenes/level/props/torch.gd" id="2_flicker"]
 
 ; The flame ships as plain diffuse geometry, which reads as dull brown next to
 ; its own light. Emission makes it look like the thing doing the lighting.

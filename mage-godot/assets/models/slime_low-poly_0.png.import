@@ -2,20 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c54nku5rcp35p"
-path.s3tc="res://.godot/imported/tileset_atlas.png-057a68fe0ee9e7d3ef401e20d31dddd2.s3tc.ctex"
+uid="uid://dctdag7ix522f"
+path.s3tc="res://.godot/imported/slime_low-poly_0.png-c7bbd6c2684400131277614cb377bd5b.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
 generator_parameters={
-"md5": "5c69e623c883dcc11d160baccc5361dd"
+"md5": "98192ea7bc24d740efce212c8fe7e251"
 }
 
 [deps]
 
-source_file="res://tileset_atlas.png"
-dest_files=["res://.godot/imported/tileset_atlas.png-057a68fe0ee9e7d3ef401e20d31dddd2.s3tc.ctex"]
+source_file="res://assets/models/slime_low-poly_0.png"
+dest_files=["res://.godot/imported/slime_low-poly_0.png-c7bbd6c2684400131277614cb377bd5b.s3tc.ctex"]
 
 [params]
 

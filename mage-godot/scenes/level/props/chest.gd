@@ -5,12 +5,12 @@ signal opened
 
 ## How close the player has to be to interact, in metres. Measured on the
 ## horizontal plane only, so standing on a ledge above a chest does not count.
-@export var interact_range := 2.0
+@export var interact_range: float = 2.0
 
 @onready var model: Node3D = $Model
 
 var player: Node3D
-var is_open := false
+var is_open: bool = false
 
 
 func _ready() -> void:
@@ -29,7 +29,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func player_in_range() -> bool:
-	var offset := player.global_position - global_position
+	var offset: Vector3 = player.global_position - global_position
 	return Vector2(offset.x, offset.z).length() <= interact_range
 
 

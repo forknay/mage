@@ -73,6 +73,10 @@ layer is both. Same for input actions — no raw keycodes in gameplay code.
 - Follow the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html):
   `snake_case` for files, functions and variables, `PascalCase` for
   classes and nodes.
+- **Everything is explicitly typed** — variables, parameters, returns, loop
+  variables. Both `var x = 5` and `var x := 5` are compile errors, by
+  project setting. See `docs/conventions.md` §"Static typing" for the
+  enforced warning list and the two patterns that need care.
 - **No gameplay logic in `_input`.** Input sets intent; systems act on it.
   This is ADR 0002 and it is what keeps coop retrofittable.
 - Spells resolve through the `SpellData` struct, never imperatively.

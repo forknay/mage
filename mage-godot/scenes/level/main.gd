@@ -2,7 +2,7 @@ extends Node3D
 
 ## Rebuilds the navigation mesh from the GridMap as it actually is when the
 ## level loads, so extending the dungeon does not need a manual bake.
-@export var bake_on_start := true
+@export var bake_on_start: bool = true
 
 @onready var navigation_region: NavigationRegion3D = $NavigationRegion3D
 

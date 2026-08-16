@@ -29,11 +29,11 @@ extends RefCounted
 ## puts points outside the box, which is harmless because $Q normalises by the
 ## bounding box anyway.
 
-const CANVAS_SIZE := 800.0
+const CANVAS_SIZE: float = 800.0
 
 ## Rays grazing the sheet produce coordinates that run to infinity, so any pen
 ## ray more than this far off the normal is refused outright. cos(70 deg).
-const MIN_FACING := 0.342
+const MIN_FACING: float = 0.342
 
 ## Where the sheet is in the world. `basis.x` is canvas +x, `basis.y` is canvas
 ## -y (canvas y points down), and `basis.z` is the normal, facing the caster.
@@ -48,7 +48,7 @@ var _last_eye: Transform3D
 ## Hangs a sheet `distance` metres in front of the eye and square to it, sized
 ## so its full 800px width spans `width_meters` at that distance.
 static func anchored_at(eye: Transform3D, distance: float, width_meters: float) -> GlyphPlane:
-	var plane := GlyphPlane.new()
+	var plane: GlyphPlane = GlyphPlane.new()
 	plane.pixels_per_meter = CANVAS_SIZE / width_meters
 	plane.transform = eye.translated_local(Vector3(0.0, 0.0, -distance))
 	plane._last_eye = eye
@@ -69,7 +69,7 @@ func carry(eye: Transform3D, pinned: bool) -> void:
 
 
 func to_canvas(world_point: Vector3) -> Vector2:
-	var offset := world_point - transform.origin
+	var offset: Vector3 = world_point - transform.origin
 	return Vector2(
 		offset.dot(transform.basis.x) * pixels_per_meter + CANVAS_SIZE / 2.0,
 		-offset.dot(transform.basis.y) * pixels_per_meter + CANVAS_SIZE / 2.0,
@@ -77,19 +77,23 @@ func to_canvas(world_point: Vector3) -> Vector2:
 
 
 func to_world(canvas_point: Vector2) -> Vector3:
-	var x := (canvas_point.x - CANVAS_SIZE / 2.0) / pixels_per_meter
-	var y := -(canvas_point.y - CANVAS_SIZE / 2.0) / pixels_per_meter
+	var x: float = (canvas_point.x - CANVAS_SIZE / 2.0) / pixels_per_meter
+	var y: float = -(canvas_point.y - CANVAS_SIZE / 2.0) / pixels_per_meter
 	return transform.origin + transform.basis.x * x + transform.basis.y * y
 
 
 ## Canvas coordinates where a ray crosses the sheet, or `null` when the ray
 ## points away from it or hits it at too shallow an angle to be meaningful.
+##
+## Typed `Variant` rather than `Vector2` on purpose: this is the one place in
+## the codebase where "no answer" is a real result, and Vector2 has no null.
+## Callers must null-check before use -- see spell_caster._sample_pen().
 func raycast(from: Vector3, direction: Vector3) -> Variant:
-	var normal := transform.basis.z
-	var facing := direction.dot(normal)
+	var normal: Vector3 = transform.basis.z
+	var facing: float = direction.dot(normal)
 	if facing > -MIN_FACING:
 		return null
-	var travel := (transform.origin - from).dot(normal) / facing
+	var travel: float = (transform.origin - from).dot(normal) / facing
 	if travel <= 0.0:
 		return null
 	return to_canvas(from + direction * travel)

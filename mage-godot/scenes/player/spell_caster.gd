@@ -24,24 +24,24 @@ signal glyph_drawn(strokes: Array[PackedVector2Array])
 @export var projectile_scene: PackedScene
 
 ## Distance from the eye to the canvas, in metres.
-@export var canvas_distance := 2.0
+@export var canvas_distance: float = 2.0
 ## How wide the full 800px canvas is at that distance, in metres. Smaller means
 ## a smaller head movement covers the canvas.
-@export var canvas_width := 2.4
+@export var canvas_width: float = 2.4
 ## Minimum canvas-pixel gap between recorded points.
-@export var min_point_spacing := 4.0
+@export var min_point_spacing: float = 4.0
 ## How far in front of the eye the placeholder bolt spawns, in metres. Must
 ## clear the player capsule or it dies on the frame it is born.
-@export var muzzle_offset := 0.8
+@export var muzzle_offset: float = 0.8
 
 @onready var _overlay: DrawOverlay = $DrawOverlay
 
-var _canvas := GlyphCanvas.new()
+var _canvas: GlyphCanvas = GlyphCanvas.new()
 var _plane: GlyphPlane
 ## True from the first stroke until commit or cancel, not just while held.
-var _drawing := false
+var _drawing: bool = false
 ## True only while the left button is down.
-var _pen_down := false
+var _pen_down: bool = false
 
 
 func _ready() -> void:
@@ -106,10 +106,13 @@ func _release_pen() -> void:
 ## Reads the crosshair against the canvas and records where it lands. Rays that
 ## point away from the canvas are simply not recorded, so turning right around
 ## mid-stroke leaves a gap rather than a spike across the whole glyph.
-func _sample_pen(force := false) -> void:
-	var eye := camera.global_transform
-	var point = _plane.raycast(eye.origin, -eye.basis.z)
-	if point != null:
+func _sample_pen(force: bool = false) -> void:
+	var eye: Transform3D = camera.global_transform
+	# Variant because GlyphPlane.raycast() returns null for a miss; narrowed to
+	# Vector2 the moment the miss is ruled out.
+	var hit: Variant = _plane.raycast(eye.origin, -eye.basis.z)
+	if hit != null:
+		var point: Vector2 = hit
 		_canvas.add_point(point, force)
 
 
@@ -123,7 +126,7 @@ func _begin() -> void:
 func _commit() -> void:
 	if _pen_down:
 		_release_pen()
-	var strokes := _canvas.take_strokes()
+	var strokes: Array[PackedVector2Array] = _canvas.take_strokes()
 	_close()
 	glyph_drawn.emit(strokes)
 
@@ -145,8 +148,8 @@ func _close() -> void:
 
 
 func _fire_placeholder() -> void:
-	var eye := camera.global_transform
-	var forward := -eye.basis.z
+	var eye: Transform3D = camera.global_transform
+	var forward: Vector3 = -eye.basis.z
 	var bolt: SpellProjectile = projectile_scene.instantiate()
 	# Parented to the scene root, not the player, so it flies straight instead
 	# of being carried around by whoever cast it.

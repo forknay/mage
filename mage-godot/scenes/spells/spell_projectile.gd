@@ -7,14 +7,14 @@ extends Area3D
 ## deflected by anything. It carries no effect: enemy.gd has no damage API yet,
 ## and per ADR 0002 damage belongs to resolve_spell(), not to the projectile.
 
-@export var speed := 22.0
+@export var speed: float = 22.0
 ## Seconds before it gives up, so misses do not fly forever.
-@export var lifetime := 4.0
+@export var lifetime: float = 4.0
 
 ## Set by the caster immediately after instantiation. Unit length, world space.
-var direction := Vector3.FORWARD
+var direction: Vector3 = Vector3.FORWARD
 
-var _age := 0.0
+var _age: float = 0.0
 
 
 func _ready() -> void:
