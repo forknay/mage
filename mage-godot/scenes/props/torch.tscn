@@ -1,0 +1,59 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="PackedScene" uid="uid://3hghnlw3vqk1" path="res://low_poly_torches.glb" id="1_torch"]
+[ext_resource type="Script" path="res://scenes/props/torch.gd" id="2_flicker"]
+
+; The flame ships as plain diffuse geometry, which reads as dull brown next to
+; its own light. Emission makes it look like the thing doing the lighting.
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_flame"]
+transparency = 1
+cull_mode = 2
+albedo_color = Color(0.718, 0.297, 0.111, 0.44)
+emission_enabled = true
+emission = Color(1, 0.44, 0.13, 1)
+emission_energy_multiplier = 1.8
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_core"]
+transparency = 1
+cull_mode = 2
+albedo_color = Color(1, 0.957, 0, 0.84)
+emission_enabled = true
+emission = Color(1, 0.85, 0.35, 1)
+emission_energy_multiplier = 3.0
+
+[node name="Torch" type="Node3D"]
+script = ExtResource("2_flicker")
+
+; Mirrored on Y so the backplate faces +Z and the torch leans out along -Z,
+; Godot's forward. Scaled to 0.35 and offset so the centre of the backplate —
+; the part that touches the wall — sits at the scene origin.
+[node name="Model" parent="." instance=ExtResource("1_torch")]
+transform = Transform3D(-0.35, 0, 0, 0, 0.35, 0, 0, 0, -0.35, 0.050199, -0.105849, -1.584784)
+
+[node name="pCube361_fire_0" parent="Model/Sketchfab_model/7586040794af46c38a9d0ebc6892c402_fbx/RootNode/group45/group46/pCube361"]
+material_override = SubResource("StandardMaterial3D_flame")
+
+[node name="pCube361_fire2wwwwww_0" parent="Model/Sketchfab_model/7586040794af46c38a9d0ebc6892c402_fbx/RootNode/group45/group46/pCube361"]
+material_override = SubResource("StandardMaterial3D_core")
+
+; The glb ships a lit torch and an unlit copy beside it. Hidden rather than
+; deleted so the copy survives a reimport.
+[node name="pCylinder50" parent="Model/Sketchfab_model/7586040794af46c38a9d0ebc6892c402_fbx/RootNode/group45/group46"]
+visible = false
+
+; Sits inside the flame, which the 0.35 scale puts ~0.6 m above the bracket.
+; Shadows are on because without them the light passes straight through the
+; wall the torch is mounted on and lights the room behind it.
+[node name="Light" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.009652, 0.602282, -0.17421)
+light_color = Color(1, 0.68, 0.36, 1)
+light_energy = 1.0
+shadow_enabled = true
+shadow_bias = 0.03
+distance_fade_enabled = true
+distance_fade_begin = 18.0
+distance_fade_length = 6.0
+omni_range = 5.0
+omni_attenuation = 1.5
+
+[editable path="Model"]

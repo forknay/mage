@@ -4,6 +4,8 @@
 [ext_resource type="PackedScene" uid="uid://dki8hk32xo7fy" path="res://player.tscn" id="1_player"]
 [ext_resource type="MeshLibrary" uid="uid://1udhi3yg0o5p" path="res://tileset.tres" id="2_0xm2m"]
 [ext_resource type="PackedScene" uid="uid://bnex0kfkhs3g8" path="res://enemy.tscn" id="4_1bvp3"]
+[ext_resource type="PackedScene" path="res://scenes/props/torch.tscn" id="5_lquwl"]
+[ext_resource type="PackedScene" path="res://scenes/props/chest.tscn" id="6_7mycd"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 
@@ -75,3 +77,12 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.569114, 0.0049848557, 4.56
 
 [node name="enemy2" parent="." unique_id=898531408 instance=ExtResource("4_1bvp3")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20.240627, 0.0049848557, 5.4798374)
+
+[node name="Torch" parent="." unique_id=360475355 instance=ExtResource("5_lquwl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9.969561, 1.9197303, -16.493954)
+
+[node name="Torch2" parent="." unique_id=296940995 instance=ExtResource("5_lquwl")]
+transform = Transform3D(1.1924881e-08, 0, -1, 0, 1, 0, 1, 0, 1.1924881e-08, -2.998835, 1.7782195, -20.641895)
+
+[node name="Chest" parent="." unique_id=384210788 instance=ExtResource("6_7mycd")]
+transform = Transform3D(1.1924881e-08, 0, -1, 0, 1, 0, 1, 0, 1.1924881e-08, -2.655767, 0.019381493, -22.93111)
