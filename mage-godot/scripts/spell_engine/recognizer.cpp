@@ -25,7 +25,7 @@ namespace {
 // you're iterating on templates, without also having to fight min_score
 // tuning at the same time. Flip back to `false` once you're done debugging
 // -- shipping with this on means the recognizer accepts literally anything.
-constexpr bool kDisableRecognitionThreshold = true;
+constexpr bool kDisableRecognitionThreshold = false;
 }  // namespace
 
 // =============================================================================

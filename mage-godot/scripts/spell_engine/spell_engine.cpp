@@ -106,32 +106,75 @@ Stroke stroke_from_json(const json& j) {
 	return Stroke(std::move(pts));
 }
 
-// Expected template file shape:
-// {
-//   "name": "line_horizontal",
-//   "level": 1,
-//   "strokes": [ [ {"x":0,"y":0}, {"x":10,"y":0}, ... ], [ ... ] ]
-// }
+// Two template file shapes are accepted, because both exist on disk:
+//
+//   (a) nested, one array per pen-stroke --
+//       {"name":"line_horizontal", "level":1,
+//        "strokes": [ [ {"x":0,"y":0}, ... ], [ ... ] ]}
+//
+//   (b) flat, as written by the interactive template capture tool, with
+//       stroke membership carried per-point --
+//       {"name":"plus", "level":1, "min_score":0.2,
+//        "points": [ {"x":254,"y":389,"stroke_id":0}, ...,
+//                    {"x":300,"y":350,"stroke_id":1}, ... ]}
+//
+// Shape (b) MUST be split back out on "stroke_id": collapsing a
+// multi-stroke gesture into one Stroke makes the pen-up gap between two
+// strokes look like a real drawn segment, which corrupts the arc-length
+// resampling the whole recognizer is built on (plus and triangleRune are
+// both multi-stroke).
 struct TemplateData {
 	std::string name;
 	std::vector<Stroke> strokes;
-	int level = 1;
+	int level = -1;  // <0 means "infer from the geometry" (see add_template)
+	double min_score = config::DEFAULT_MIN_SCORE;
 };
+
+// Splits a flat "points" array into one Stroke per contiguous run of equal
+// "stroke_id" (points missing the key are treated as stroke 0), preserving
+// the file's point order within and across strokes.
+std::vector<Stroke> strokes_from_flat_points(const json& points_json) {
+	std::vector<Stroke> strokes;
+	std::vector<Point> current;
+	int current_id = 0;
+	bool started = false;
+
+	for (const auto& pj : points_json) {
+		int id = pj.value("stroke_id", 0);
+		if (started && id != current_id) {
+			strokes.push_back(Stroke(std::move(current)));
+			current.clear();
+		}
+		current.push_back(point_from_json(pj));
+		current_id = id;
+		started = true;
+	}
+	if (!current.empty()) {
+		strokes.push_back(Stroke(std::move(current)));
+	}
+	return strokes;
+}
 
 TemplateData template_from_json(const json& j) {
 	TemplateData t;
 	t.name = j.at("name").get<std::string>();
-	t.level = j.value("level", 1);
-	
-	// Read "points" instead of "strokes"
-	const auto& points_json = j.at("points");
-	if (points_json.empty()) {
-		throw std::runtime_error("spell_engine: template '" + t.name + "' has no points");
+	t.level = j.value("level", -1);
+	t.min_score = j.value("min_score", config::DEFAULT_MIN_SCORE);
+
+	if (j.contains("strokes")) {
+		for (const auto& sj : j.at("strokes")) {
+			t.strokes.push_back(stroke_from_json(sj));
+		}
+	} else if (j.contains("points")) {
+		t.strokes = strokes_from_flat_points(j.at("points"));
+	} else {
+		throw std::runtime_error("spell_engine: template '" + t.name +
+								  "' has neither a 'strokes' nor a 'points' array");
 	}
 
-	// Construct a single Stroke from the array of points
-	t.strokes.push_back(stroke_from_json(points_json));
-
+	if (t.strokes.empty()) {
+		throw std::runtime_error("spell_engine: template '" + t.name + "' has no points");
+	}
 	return t;
 }
 // Expected slot shape (all fields but "id"/"shape" optional):
@@ -227,19 +270,31 @@ SpellEngine::SpellEngine() : recognizer_(config::NUM_RESAMPLE_POINTS) {
 
 void SpellEngine::register_templates() {
 	// Loads every *.json file under kTemplatesDir (see the loader helpers
-	// above for the expected schema) and registers each as a gesture
-	// template. Errors on any individual file abort startup with a
-	// message identifying the offending file, rather than silently
-	// skipping a broken template.
-	for (const auto& path : list_json_files(kTemplatesDir)) {
+	// above for the accepted schemas) and registers each as a gesture
+	// template.
+	//
+	// A failure on ONE file only skips that file -- it must never abort the
+	// whole loop. Letting it abort meant a single malformed template left
+	// the recognizer holding only the alphabetically-earlier templates,
+	// and since best_matching_template always returns *some* best match
+	// from whatever is registered, that failure surfaced not as an error
+	// but as every gesture in the game recognizing as the same shape.
+	// Each skip is logged loudly, and so is the final registered count.
+	const auto paths = list_json_files(kTemplatesDir);
+	int failed = 0;
+	for (const auto& path : paths) {
 		try {
 			TemplateData t = template_from_json(load_json_file(path));
-			recognizer_.add_template(t.name, t.strokes, t.level);
-			jenova::sdk::Output("added a template");
+			recognizer_.add_template(t.name, t.strokes, t.level, t.min_score);
+			jenova::sdk::Output("spell_engine: registered template '%s' (level=%d, strokes=%d, min_score=%.2f)",
+								 t.name.c_str(), t.level, static_cast<int>(t.strokes.size()), t.min_score);
 		} catch (const std::exception& e) {
-			throw std::runtime_error("spell_engine: failed to load template '" + path.string() + "': " + e.what());
+			++failed;
+			jenova::sdk::Output("spell_engine: SKIPPED template '%s': %s", path.string().c_str(), e.what());
 		}
 	}
+	jenova::sdk::Output("spell_engine: %d template(s) registered, %d skipped, %d file(s) found",
+						 static_cast<int>(recognizer_.templates().size()), failed, static_cast<int>(paths.size()));
 }
 
 void SpellEngine::register_spells() {
