@@ -1,7 +1,7 @@
 #include "scripts/spell_engine/godot_spell_engine.hpp"
 #include <array>
 #include <iostream>
-// Jenova SDK (needed for sakura:: hot-reload hooks and JENOVA_ACTIVATOR)
+// Jenova SDK (needed for JENOVA_ACTIVATOR)
 #include <JenovaSDK.h>
 
 namespace godot {
@@ -73,10 +73,11 @@ Array GodotSpellEngine::get_features() const {
 // the class: as far as Godot is concerned, it was never registered.
 //
 // Jenova Nested Extensions need a Register/Unregister function pair that
-// call ClassDB::register_class<>() plus the Sakura hot-reload hooks
-// (sakura::FinishReload / sakura::PrepareReload / sakura::Dispose), and
-// those functions need to actually run — either from a Boot Script
-// (JenovaBoot/JenovaShutdown) or via the JENOVA_ACTIVATOR macro below.
+// calls ClassDB::register_class<>(), and those functions need to actually
+// run — either from a Boot Script (JenovaBoot/JenovaShutdown) or via the
+// JENOVA_ACTIVATOR macro below. The Sakura hot-reload hooks are deliberately
+// omitted: opting this class out of Sakura tracking silences the hot-reload
+// warning at the cost of needing an editor restart after rebuilding.
 // ---------------------------------------------------------------------------
 
 using namespace godot;
@@ -84,12 +85,11 @@ using namespace jenova::sdk;
 
 void RegisterGodotSpellEngine() {
 	ClassDB::register_class<GodotSpellEngine>();
-	sakura::FinishReload("GodotSpellEngine");
+	// no sakura::FinishReload() — Sakura won't track this class for hot-reload
 }
 
 void UnregisterGodotSpellEngine() {
-	sakura::PrepareReload("GodotSpellEngine");
-	sakura::Dispose("GodotSpellEngine");
+	// no sakura::PrepareReload / sakura::Dispose
 }
 
 // Self-activation: registers/unregisters this class automatically without
