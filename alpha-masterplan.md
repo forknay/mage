@@ -7,7 +7,11 @@
 
 Legend: each leaf task ≤ 1h unless marked. `[cut]` = safe to drop if behind schedule. `⚖` = tradeoff decision. `🔒` = hard gate, do not proceed past it.
 
-> **Input model: hex lattice.** Strokes snap to a triangular lattice and may only traverse adjacent edges, so classification is exact integer math on 60° turns. This is what `hex_spellcaster_prototype.html` already demonstrates. The earlier freeform plan ($P recognizer + RDP + circle fit + fuzzy "quality" score) is **dropped** — see ADR 0.2.1.
+> ⚠️ **Out of date as of 2026-08-16: the input model is freeform, not the lattice this plan is written around.** What shipped is unconstrained drawing on a world-space canvas, classified by an orientation-sensitive $Q point-cloud recognizer in C++ (built by Jenova), with spells defined as layouts of recognised shapes in JSON. [`docs/design/spells.md`](docs/design/spells.md) describes the real thing; [ADR 0001](docs/adr/0001-lattice-vs-freeform.md) carries the reversal note.
+>
+> Phase 2 below (**Lattice Glyph Pipeline**) is therefore obsolete as written, and every task that mentions lattice geometry, signatures, edge economy or `find_pattern.js` should be read as "there is an equivalent question here, with a different answer." Phases 1, 3–8 are broadly unaffected — the canvas, the Escape rule, telemetry and combat all sit above the input model. **This plan has not been rewritten**; it is kept as the schedule and scope record it was.
+
+> **Original input-model note (kept for the record).** Strokes snap to a triangular lattice and may only traverse adjacent edges, so classification is exact integer math on 60° turns. This is what `hex_spellcaster_prototype.html` already demonstrates. The earlier freeform plan ($P recognizer + RDP + circle fit + fuzzy "quality" score) is **dropped** — see ADR 0.2.1.
 
 > ### Already built (engine-free pass, ~9h of the plan below)
 >

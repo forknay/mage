@@ -25,16 +25,25 @@ hit_rate = rows where matched_spell != "" / total rows
 ```
 
 Below 70%, the dials come out in this order — cheapest and least
-destructive first:
+destructive first (see `docs/design/spells.md` §4, and check each change in
+the tester before shipping it):
 
-1. Increase snap radius
-2. Coarsen the lattice (fewer, larger cells)
-3. Shorten the patterns (re-run `find_pattern.js` to keep separation ≥ 2)
-4. Promote the grimoire to permanent HUD hints
+1. Loosen the cloud-distance penalty (`CLOUD_DISTANCE_PENALTY_THRESHOLD`,
+   `_EXPONENT`) — this forgives sloppiness without forgiving *wrong shapes*,
+   which is why it comes before the blunt instrument below
+2. Lower the offending template's `min_score`, one template at a time
+3. Add a second template for the same shape, captured from a different hand
+4. Simplify the spell layout — fewer slots, or wider angle tolerances
+5. Promote the grimoire to permanent HUD hints
 
-Note this measures *intent*, so a pattern the player has misremembered
-counts as a failure. That is correct — a spell they cannot recall is a
-spell they do not have.
+Only step 2 carries the freeform failure mode ADR 0001 warned about:
+lowering a threshold makes *every* shape more collidable, so re-draw the
+neighbouring shapes after each drop rather than trusting the one that
+prompted it.
+
+Note this measures *intent*, so a glyph the player has misremembered counts
+as a failure. That is correct — a spell they cannot recall is a spell they do
+not have.
 
 ### 3. Zero softlocks across three full playthroughs
 
@@ -80,8 +89,9 @@ Listed so nobody quietly adds them at the end:
 
 Run this immediately before calling the alpha done:
 
-- [ ] `node proto/glyph_core.test.js` passes
-- [ ] The pattern separation matrix still reports minimum ≥ 2
+- [ ] Every spell can actually be matched — each shape its slots name has a
+      template on disk (the tester says so in one draw)
+- [ ] `kDisableRecognitionThreshold` in `recognizer.cpp` is `false`
 - [ ] Telemetry CSV is being written and is readable
 - [ ] Escape cancels a draw but pauses otherwise, in both orders
 - [ ] Earth wall despawns on a timer even if the player never leaves the room

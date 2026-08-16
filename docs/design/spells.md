@@ -1,136 +1,233 @@
-# Spells — patterns, scoring, balance
+# Spells — shapes, layouts, balance
 
-Masterplan tasks 2.2.1, 2.2.2, 4.3.2. The authoritative data lives in
-`proto/glyph_core.js` (`ALPHA_PATTERNS`, `DEFAULT_SCORING`); this document
-explains it and holds the balance numbers that become
-`resources/tuning/balance.tres`.
+How a drawn glyph becomes a spell, what the data files mean, and the
+balance numbers the fight is tuned to.
+
+> **This describes freeform recognition, not the lattice.** The shipped
+> input model is unconstrained drawing classified by a $Q point-cloud
+> recognizer — [ADR 0001](../adr/0001-lattice-vs-freeform.md) chose the
+> opposite and has been overtaken by the implementation. Nothing about
+> edges, signatures, edit distance or `find_pattern.js` applies any more.
 
 ---
 
-## 1. The four alpha patterns
+## 1. The pipeline
 
-| Spell | Pattern | Edges | Signature | Shape | Archetype |
-|---|---|---|---|---|---|
-| **Fireball** | `0,2,4` | 3 | `024` | closed triangle | projectile |
-| **Lightning** | `0,1,0,1` | 4 | `0101` | zigzag, open | hitscan |
-| **Earth Wall** | `0,0,0,0,0` | 5 | `00000` | straight line | summon |
-| **Ward** | `0,1,2,3,4,5` | 6 | `012345` | closed hexagon | self |
+| Step | Where | What happens |
+|---|---|---|
+| Draw | [`spell_caster.gd`](../../mage-godot/scenes/player/spell_caster.gd) | Hold `anchor`, hold `draw`; the crosshair is the pen. One hold = one stroke, several strokes per glyph |
+| Record | [`glyph_plane.gd`](../../mage-godot/scripts/glyph/glyph_plane.gd), [`glyph_canvas.gd`](../../mage-godot/scripts/glyph/glyph_canvas.gd) | The pen ray is intersected with the canvas plane and stored as 2D points in an 800×800 space, thinned to 4px spacing |
+| Recognise | `GodotSpellEngine` → `qrec::QRecognizer` | Each **finished** stroke is fed to the C++ engine, which re-recognises the region that stroke touched |
+| Compose | same | Recognised shapes that sit close together are bundled and re-recognised as higher-level shapes |
+| Match | `qrec::SpellBook` → `match_best_spell` | The whole set of recognised shapes is checked against every spell definition |
+| Show | [`recognition_readout.gd`](../../mage-godot/scenes/player/recognition_readout.gd) | Names each recognised shape on screen while testing |
 
-Directions are lattice edge indices 0–5, at 60° increments clockwise from
-east. See `glyph_core.js` for the axial coordinate system.
+Two vocabularies, and they are not interchangeable:
 
-### Why these four
+- A **template** is one shape the recognizer knows — `star_5`, `plus`. It is
+  matched by geometry alone, with **position, scale and location thrown
+  away** (but *not* rotation: $Q here is orientation-sensitive, so an upside
+  down triangle is a different shape).
+- A **feature** is one template that has been found on the canvas, with a
+  score and a place. A canvas holds several at once.
+- A **spell** is a *layout* of features — exactly the information the
+  recognizer discarded: which shapes, at what distances and bearings from
+  the drawing's centre, and how they sit relative to each other.
 
-**Fireball is the shortest.** It is the spell cast under pressure, so it
-gets the fewest edges. Three edges is the practical floor — anything
-shorter cannot be distinguished from a stray drag.
+That split is the whole design. "Is this a triangle" must work anywhere on
+the canvas; "is this the warding pentagram" is a question about where the
+triangles are.
 
-**Earth Wall is a straight line**, which is both thematically exact (a line
-*is* a wall) and, despite having five edges, almost certainly the fastest
-pattern in the set to trace: it has **zero turns**. Edge count is a poor
-proxy for draw time; turns are what cost time. P1 will confirm this.
+### Recognition is incremental
 
-**Ward is the slowest** on purpose. A hexagon is the lattice's signature
-shape, and a defensive commitment should cost something. If P1 shows it is
-so slow as to be unusable defensively, the fix is to shorten it — but check
-first whether "you must anticipate danger rather than react to it" is
-actually the more interesting mechanic.
+`add_stroke` does not re-read the whole canvas. It finds the spatial groups
+the new stroke could touch, recomputes only those, and reuses cached results
+for everything else. Consequences worth knowing:
 
-### Separation — the safety property
+- Feedback arrives **per stroke**, not per cast. A half-drawn glyph already
+  has features, which is what the on-screen readout shows.
+- The engine's canvas is separate from the GDScript one. `GlyphCanvas.clear()`
+  clears both; `take_strokes()` deliberately does not, and `_begin()` clears
+  before each new glyph. Skip that and the next glyph is recognised on top of
+  the last one's leftovers.
 
-Every pair of patterns is **edit distance ≥ 3** apart, measured across all
-24 symmetries (6 rotations × mirror × reversal):
+## 2. Templates — the shapes
 
+One JSON file per shape in `mage-godot/assets/spell_engine/templates/`. Every
+`*.json` in that folder is registered at startup; a file that fails to parse
+is **skipped and logged**, not fatal, because one bad file must not silently
+leave the recognizer holding a partial set.
+
+Two file shapes are accepted, because both exist on disk:
+
+```jsonc
+// nested — one array per pen stroke
+{"name": "triangle_up", "level": 1, "min_score": 0.2,
+ "strokes": [[{"x": 0, "y": 0}, {"x": 40, "y": 60}], [ ... ]]}
+
+// flat — as written by the capture tool, stroke membership per point
+{"name": "plus", "level": 1, "min_score": 0.2,
+ "points": [{"x": 254, "y": 389, "stroke_id": 0}, ...,
+            {"x": 300, "y": 350, "stroke_id": 1}, ...]}
 ```
-              fireball  lightning  earth_wall  ward
-  fireball           0          3           4     3
-  lightning          3          0           3     4
-  earth_wall         4          3           0     5
-  ward               3          4           5     0
+
+| Field | Meaning |
+|---|---|
+| `name` | What the feature is called everywhere else. **Spell files refer to shapes by this string**, not by filename |
+| `level` | How many physically separate stroke units the shape has, after touching strokes are merged. Omit it and it is inferred; give it and a mismatch is an error |
+| `min_score` | Below this, a match is not accepted. Per template, because a distinctive shape can afford to be strict and a plain one cannot |
+| `strokes` / `points` | The geometry. `stroke_id` **must** be preserved — collapsing a multi-stroke shape into one stroke makes the pen-up gap look like a drawn segment and corrupts the arc-length resampling everything else is built on |
+
+`level` is also a filter: a recognition at level 1 only ever compares against
+level-1 templates. That is what keeps composed shapes from competing with
+atomic ones, and it means template cost is per level, not global.
+
+**On disk today:** `heart`, `line_horizontal`, `plus`, `star_5`,
+`triangle_down`, `triangle_up`, `triangleRune` — all level 1.
+
+## 3. Spells — the layouts
+
+One JSON file per spell in `mage-godot/assets/spell_engine/spells/`. Unlike
+templates, a spell that fails to load **is** fatal to the load pass — a
+half-registered spellbook is worse than a loud failure.
+
+```jsonc
+{
+  "name": "warded_pentagram",
+  "min_score": 0.5,
+  "features": [
+    {"id": 0, "shape": "star_5", "distance": 0.0, "tolerance_dist": 0.25},
+    {"id": 3, "shape": "triangle_up", "min_angle": 330, "max_angle": 30,
+     "tolerance_angle": 35}
+  ],
+  "relative_constraints": [
+    {"subject_id": 0, "reference_id": 1, "relation": "inside",
+     "margin": 0.0, "tolerance": 0.18}
+  ]
+}
 ```
 
-**The rule: minimum separation ≥ 2.** At distance 1, a single mis-stepped
-edge silently casts the wrong spell — the lattice equivalent of the
-recognition failure ADR 0001 exists to avoid. The current set clears the
-bar with a full point to spare, so even a *two*-edge mistake cannot cast
-the wrong spell.
+A **slot** (`features[]`) is one feature the spell wants:
 
-This is verified exhaustively, not argued: `glyph_core.test.js` enumerates
-every single-edit mutation of every pattern (237 of them) and asserts none
-produces a different spell's signature.
+| Field | Meaning |
+|---|---|
+| `id` | Unique within this spell. Only used to wire up `relative_constraints` |
+| `shape` | A template `name`. A shape with no template can never fill the slot |
+| `distance` | Expected distance from the **drawing's centre**, normalised by the drawing's own size, so a big glyph and a small one score the same. Omit it to score on shape alone |
+| `tolerance_dist` | How far off `distance` may be before the slot stops scoring |
+| `min_angle` / `max_angle` | A **compass** sector, clockwise: 0 = north, 90 = east, 180 = south, 270 = west. Wraps correctly, so `330 → 30` is "roughly north". Omit both to leave the bearing free |
+| `tolerance_angle` | Degrees of slack outside the sector |
 
-### Adding a spell
+A **relative constraint** ties two filled slots together: `farther`,
+`closer` (compare their distances from centre) or `inside`, `outside`
+(compare a feature's position against another feature's own extent).
+`margin` shifts the boundary, `tolerance` is how hard the failure is.
 
-Do not hand-pick a shape. Run the search:
+Matching is a backtracking search over assignments of features to slots,
+scoring each slot and each constraint, keeping the best. Slots may be left
+unfilled — an incomplete assignment simply scores lower. `min_score` is the
+average score across slots + constraints that the spell must clear to be
+accepted, and `match_spell()` returns the highest-scoring accepted spell, or
+`""`.
+
+**Not rotation invariant, on purpose.** "North" is up on the page, not up
+relative to some anchor feature. Turning the whole glyph 90° makes it a
+different spell — or no spell.
+
+## 4. Tuning
+
+Everything lives in
+[`config.hpp`](../../mage-godot/scripts/spell_engine/config.hpp); these are
+the ones worth reaching for first.
+
+| Knob | Value | What it does |
+|---|---|---|
+| `DEFAULT_MIN_SCORE` | 0.15 | Acceptance floor for templates that do not set their own. **The main "how forgiving is recognition" dial** |
+| `DEFAULT_SPELL_MIN_SCORE` | 0.75 | Same, for spells that do not set their own |
+| `DEFAULT_TOUCH_THRESHOLD` | 8.0 px | How close two strokes must get to count as one shape |
+| `DEFAULT_ENDPOINT_TOUCH_THRESHOLD` | 20.0 px | Same, but for a stroke's endpoints — a near miss at the tip still joins |
+| `DEFAULT_LEVEL_MERGE_THRESHOLDS` | `{2: 60px}` | How far apart two features may be and still compose into a level-2 shape |
+| `CLOUD_DISTANCE_PENALTY_THRESHOLD` / `_EXPONENT` | 55 px / 1.4 | What separates "sloppy" from "structurally wrong". Tune these before dropping `min_score` |
+| `ASPECT_RATIO_WEIGHT` | 0.02 | How much a wrong bounding-box shape is punished. Also the early-out that lets a strong match stop the template scan early |
+| `NUM_RESAMPLE_POINTS` | 64 | Points every shape is resampled to. Cost is linear in this |
+
+There is also a debug switch at the top of `recognizer.cpp`
+(`kDisableRecognitionThreshold`, currently `false`) that accepts any best
+match regardless of `min_score`. It exists for template iteration; shipping
+with it on means the recognizer accepts literally anything.
+
+## 5. Adding a shape or a spell
+
+Use the tester — it is the same engine and the same asset files, without
+Godot in the loop:
 
 ```bash
-node proto/find_pattern.js --len 3,4,5 --against fireball,lightning,earth_wall,ward
+powershell -File tools/spell_tester/run.ps1
 ```
 
-It reports every candidate with its safety margin, filters out paths that
-double back (unreachable, since backtracking erases) and paths that revisit
-a point mid-draw (hard to trace and hard to read on the HUD). Pick the
-evocative one *from the safe list*.
+1. **Draw the shape in the tester.** If it already recognises as something
+   else with a high score, that collision is the problem to solve first —
+   two templates that overlap will fight forever afterwards.
+2. **Add the template JSON**, then restart the tester (templates are read
+   once, at startup) and draw it a dozen times, badly on purpose. Set
+   `min_score` from what you see: high enough that your sloppiest *wrong*
+   shape stays out, low enough that your sloppiest *right* shape gets in.
+3. **Add the spell JSON** referring to the shapes by name, and draw the whole
+   layout. The panel shows every feature and the matched spell.
+4. **Re-draw the neighbouring spells.** A new spell that steals another
+   spell's assignment is the failure that only shows up in combination.
 
-This is how Earth Wall was chosen: the hand-picked rhombus `0134` scored
-margin 2; the search found the straight line at margin 3.
+## 6. What is not built yet
 
-Two beta candidates are already validated and used as distractors in the P3
-memory spike — `Chain` (`2,1,1,0,0`) and `Frost` (`1,3,2,0,0`). The
-six-pattern set keeps minimum separation 3.
+Read this before assuming a doc describes working code:
 
-### Invariance — what counts as "the same glyph"
+- **Casting ignores recognition.** `spell_caster._commit()` fires the same
+  placeholder bolt for every glyph. `match_spell()` is exposed to GDScript
+  but nothing calls it, so no spell has an effect.
+- **`SpellData` does not exist.** [ADR 0002](../adr/0002-spell-data-contract.md)
+  still describes the intended boundary, but several of its fields
+  (`signature`, `speed`, `economy`) were lattice concepts with no freeform
+  equivalent. The `power` scaling in §7 below has no implementation and no
+  agreed formula — the recognizer's 0–1 score is the obvious raw material.
+- **Two shapes the spells want do not exist.** Both spell files reference
+  `circle`, and `circle_and_north_caret` also wants `caret`; neither has a
+  template. Until they do, neither spell can match — worth fixing before
+  anything downstream is judged.
 
-| Transform | Same spell? | Why |
-|---|---|---|
-| Drawn anywhere on the lattice | yes | Only directions are stored, never positions |
-| Rotated any multiple of 60° | yes | Normalised by subtracting the first direction |
-| Mirrored | yes | Compared against the reflected form |
-| Drawn from the other end | **yes** | Deliberate — starting from the wrong corner is exactly the mistake a panicking player makes |
-| Drawn larger (2 edges per side) | **no** | Deliberate — scale is most of the design space a 6-direction lattice has |
+## 7. Performance
+
+Measured on the shipped engine sources (`g++ -O2`), duplicating the real
+templates up to 400. Recognition runs on the main thread when a stroke ends.
+
+| Templates | Typical 3-stroke glyph, worst stroke | Dense 8-stroke glyph, worst stroke | Startup |
+|---|---|---|---|
+| 7 (today) | 0.06 ms | 0.20 ms | 4 ms |
+| 50 | 0.24 ms | 0.45 ms | 24 ms |
+| 200 | 0.95 ms | 1.41 ms | 86 ms |
+| 400 | 2.02 ms | 3.21 ms | 156 ms |
+
+Cost is linear in **templates at that level**, about 5 µs each, multiplied by
+how many separate features are on the canvas. A 60fps frame is 16.7 ms, so
+recognition has roughly three orders of magnitude of headroom: you would need
+something like 2000 templates at one level before a single stroke costs a
+dropped frame.
+
+**Startup is the part that will bite first**, and it is file I/O, not maths:
+registering a template costs ~0.1 ms of CPU, but *opening* hundreds of small
+JSON files cost 0.4–3.5 s on a cold first read in testing. If the library
+ever gets large, pack the templates into one file or ship precomputed ones
+(`add_precomputed_template` already exists for this) before optimising
+anything in the recognizer.
 
 ---
 
-## 2. Scoring — power = speed × economy
+## 8. Balance and TTK targets
 
-The lattice has no fuzzy "draw quality" axis, but it still has a skill
-axis, and both halves are exact integers rather than a tuned curve.
-
-```
-speed    = 1                              if elapsed <= par
-         = (par*2.5 - elapsed)            normalised to 0..1, else
-           / (par*2.5 - par)
-
-economy  = edges / (edges + fumbles)
-
-power    = 0.4 + 0.9 * speed * economy    ->  0.4 .. 1.3
-```
-
-**A fumble** is a backtrack or an attempt to re-trace an edge already used.
-Count *attempts*, not results: input capture already refuses the move, so
-the only record that the player struggled is how many times they tried.
-Instrument this at input time — it cannot be recovered from the final path.
-
-**Par times** are per-pattern and are placeholders until P1 supplies real
-numbers. Current values: fireball 1.1s, earth wall 1.2s, lightning 1.4s,
-ward 2.0s.
-
-**Why a 0.4 floor and a 1.3 ceiling.** A floor means a bad cast is still a
-cast — the spell fires, it just hurts less, so a fumbling player is never
-left defenceless. The ceiling above 1.0 means mastery is rewarded rather
-than merely un-punished. Both live in `DEFAULT_SCORING` and are meant to be
-tuned from playtest data.
-
-Configuration goes in `resources/tuning/scoring.tres`, not in code.
-
----
-
-## 3. Balance and TTK targets
-
-> **All enemy timings are derived from `T`, the combat tempo constant** —
-> the median total cast time measured by spike P1 (masterplan 3.2.6).
-> The numbers below assume **T = 1.8s** as a placeholder. When P1 reports,
-> recompute rather than nudge.
+> Unchanged from the original plan and **not yet implemented** — no spell
+> currently does damage. The `T` tempo constant came from a lattice-era
+> spike; the freeform equivalent (how long a glyph takes to draw under
+> pressure) has not been measured, so treat every number here as a
+> placeholder with the right *shape*, not the right value.
 
 ### Derivation rules
 
@@ -139,7 +236,7 @@ These are the relationships that must hold; the numbers are consequences.
 | Rule | Why |
 |---|---|
 | Melee closing time from aggro ≥ **1.5 T** | You must be able to finish a cast you started when it noticed you |
-| Melee attack windup ≥ **0.4s** | Reaction time floor — below this a hit is unavoidable, not unfair-feeling but unfair |
+| Melee attack windup ≥ **0.4s** | Reaction time floor — below this a hit is unavoidable |
 | Ranged fire interval ≥ **2 T** | Enough to raise an earth wall between shots, which is the counterplay |
 | Miniboss fight length ≈ **10–12 casts** | Long enough to feel like a fight, short enough that one bad run is not 5 minutes wasted |
 | Player survives sustained melee ≥ **8s** | A mistake costs, but does not instantly end a run |
@@ -152,7 +249,7 @@ These are the relationships that must hold; the numbers are consequences.
 | Move speed | 5.0 m/s |
 | Move speed while drawing | 1.5 m/s (30%, masterplan 3.1.3) |
 
-### Spells (base values, before the 0.4–1.3 power multiplier)
+### Spells (base values, before any power multiplier)
 
 | Spell | Damage | Notes |
 |---|---|---|
@@ -162,8 +259,8 @@ These are the relationships that must hold; the numbers are consequences.
 | Ward | — | 60% damage reduction, 4s |
 
 Lightning does less than fireball because it cannot miss and has no travel
-time. If playtests show fireball is strictly better, the fix is to widen
-that gap, not to close it.
+time. If playtests show fireball is strictly better, the fix is to widen that
+gap, not to close it.
 
 ### Enemies
 
@@ -181,7 +278,7 @@ that gap, not to close it.
 
 | Target | Casts to kill | At T = 1.8s |
 |---|---|---|
-| Melee (60 HP) | 2 fireballs at ~0.85 power | ~3.6s + travel |
+| Melee (60 HP) | 2 fireballs | ~3.6s + travel |
 | Ranged (40 HP) | 2 lightning, or 1 fireball + splash | ~3.6s |
 | Miniboss (300 HP) | ~10 fireballs | ~20s |
 | **Player**, under one melee | 9 hits | ~10.8s |
@@ -189,15 +286,15 @@ that gap, not to close it.
 
 That last row is the point of the whole encounter design: standing still to
 draw is survivable against one enemy and fatal against a pair. Slow-walking
-while drawing (3.1.3) is what turns it from a death sentence into a
-decision.
+while drawing (3.1.3) is what turns it from a death sentence into a decision.
 
 ### What to tune first if combat feels wrong
 
 1. **"I die while drawing"** → raise melee windup, then lower melee damage.
-   Do *not* raise player health first; that flattens every other tuning
-   knob.
-2. **"Combat is trivial"** → shorten ranged fire interval toward 2 T, then
-   add a second ranged enemy rather than buffing existing ones.
-3. **"The miniboss is a slog"** → cut its HP. Never raise spell damage to
-   fix a boss; that breaks every normal encounter at once.
+   Do *not* raise player health first; that flattens every other tuning knob.
+2. **"Combat is trivial"** → shorten ranged fire interval toward 2 T, then add
+   a second ranged enemy rather than buffing existing ones.
+3. **"The miniboss is a slog"** → cut its HP. Never raise spell damage to fix
+   a boss; that breaks every normal encounter at once.
+4. **"My glyph didn't register"** → this is now a recognition problem, not a
+   balance one. §4 above, and the tester, before anything here.

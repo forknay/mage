@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>spell tester</title>
+<style>
+	:root {
+		color-scheme: dark;
+		--ink: #e8e4d8;
+		--dim: #8a8578;
+		--live: #fff0b3;
+		--paper: #14161a;
+		--panel: #1c1f25;
+		--line: #2c313a;
+		--hit: #8ad9ff;
+	}
+	* { box-sizing: border-box; }
+	body {
+		margin: 0;
+		background: var(--paper);
+		color: var(--ink);
+		font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+		display: flex;
+		gap: 16px;
+		padding: 16px;
+		height: 100vh;
+	}
+	#canvas-wrap {
+		flex: 0 0 auto;
+		position: relative;
+	}
+	canvas {
+		background: #0d0f12;
+		border: 1px solid var(--line);
+		border-radius: 4px;
+		cursor: crosshair;
+		display: block;
+		height: min(calc(100vh - 32px), 800px);
+		width: min(calc(100vh - 32px), 800px);
+		touch-action: none;
+	}
+	aside {
+		flex: 1 1 260px;
+		min-width: 240px;
+		max-width: 420px;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		overflow: auto;
+	}
+	.card {
+		background: var(--panel);
+		border: 1px solid var(--line);
+		border-radius: 4px;
+		padding: 12px;
+	}
+	h1 { font-size: 14px; margin: 0 0 4px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
+	h2 { font-size: 11px; margin: 0 0 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+	#spell { font-size: 20px; font-weight: 600; }
+	#spell.none { font-size: 14px; font-weight: 400; color: var(--dim); }
+	ul { list-style: none; margin: 0; padding: 0; }
+	li { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+	li:last-child { border-bottom: 0; }
+	li .name { color: var(--hit); }
+	li .score { color: var(--dim); font-variant-numeric: tabular-nums; }
+	.empty { color: var(--dim); }
+	button {
+		font: inherit;
+		color: var(--ink);
+		background: #262b33;
+		border: 1px solid var(--line);
+		border-radius: 3px;
+		padding: 6px 12px;
+		cursor: pointer;
+	}
+	button:hover { background: #303640; }
+	kbd {
+		background: #262b33;
+		border: 1px solid var(--line);
+		border-bottom-width: 2px;
+		border-radius: 3px;
+		padding: 0 4px;
+		font: 11px/1.6 ui-monospace, monospace;
+	}
+	.hint { color: var(--dim); }
+	#status { min-height: 1.5em; color: var(--dim); }
+	#status.error { color: #ff9a8a; }
+</style>
+</head>
+<body>
+
+<div id="canvas-wrap">
+	<canvas id="pad" width="800" height="800"></canvas>
+</div>
+
+<aside>
+	<div class="card">
+		<h1>spell tester</h1>
+		<p class="hint" style="margin:0">
+			Drag to draw a stroke. Recognition runs on the C++ engine the game
+			uses, on every finished stroke.
+		</p>
+	</div>
+
+	<div class="card">
+		<h2>Spell</h2>
+		<div id="spell" class="none">no spell matched</div>
+	</div>
+
+	<div class="card">
+		<h2>Features</h2>
+		<ul id="features"></ul>
+		<div id="features-empty" class="empty">nothing recognised yet</div>
+	</div>
+
+	<div class="card">
+		<button id="clear">Clear canvas</button>
+		<p class="hint" style="margin:8px 0 0"><kbd>C</kbd> clears too.</p>
+		<div id="status"></div>
+	</div>
+</aside>
+
+<script>
+// The canvas is 800x800 to match GlyphPlane.CANVAS_SIZE, so a glyph drawn
+// here lands in the same coordinate space the game feeds the engine.
+const CANVAS_SIZE = 800;
+// GlyphCanvas.min_point_spacing / MIN_STROKE_POINTS. Sampling the pen the
+// same way matters: a stroke of hundreds of near-duplicate points is a
+// different input to $Q's resampling than the game's thinned one.
+const MIN_POINT_SPACING = 4.0;
+const MIN_STROKE_POINTS = 2;
+
+const pad = document.getElementById("pad");
+const ctx = pad.getContext("2d");
+const spellEl = document.getElementById("spell");
+const featuresEl = document.getElementById("features");
+const featuresEmptyEl = document.getElementById("features-empty");
+const statusEl = document.getElementById("status");
+
+let strokes = [];      // finished strokes, each an array of {x, y}
+let current = null;    // the stroke under the pen
+let features = [];     // whatever the engine last reported
+
+function canvasPoint(event) {
+	const rect = pad.getBoundingClientRect();
+	return {
+		x: (event.clientX - rect.left) * (CANVAS_SIZE / rect.width),
+		y: (event.clientY - rect.top) * (CANVAS_SIZE / rect.height),
+	};
+}
+
+function redraw() {
+	ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+	ctx.lineWidth = 3;
+	ctx.lineCap = "round";
+	ctx.lineJoin = "round";
+	for (const stroke of strokes) {
+		drawStroke(stroke, "#8ad9ff");
+	}
+	if (current) {
+		drawStroke(current, "#fff0b3");
+	}
+
+	// Name each feature where it actually sits, so a multi-feature glyph
+	// says which shape was read as what rather than just listing names.
+	ctx.font = "16px 'Segoe UI', system-ui, sans-serif";
+	ctx.textAlign = "center";
+	ctx.textBaseline = "middle";
+	for (const feature of features) {
+		const label = feature.name + "  " + feature.score.toFixed(2);
+		ctx.lineWidth = 4;
+		ctx.strokeStyle = "rgba(0, 0, 0, 0.75)";
+		ctx.strokeText(label, feature.cx, feature.cy);
+		ctx.fillStyle = "#fff0b3";
+		ctx.fillText(label, feature.cx, feature.cy);
+	}
+}
+
+function drawStroke(stroke, color) {
+	if (stroke.length < 2) return;
+	ctx.strokeStyle = color;
+	ctx.lineWidth = 3;
+	ctx.beginPath();
+	ctx.moveTo(stroke[0].x, stroke[0].y);
+	for (let i = 1; i < stroke.length; i++) {
+		ctx.lineTo(stroke[i].x, stroke[i].y);
+	}
+	ctx.stroke();
+}
+
+function render(state) {
+	features = state.features || [];
+
+	if (state.spell) {
+		spellEl.textContent = state.spell;
+		spellEl.classList.remove("none");
+	} else {
+		spellEl.textContent = "no spell matched";
+		spellEl.classList.add("none");
+	}
+
+	featuresEl.innerHTML = "";
+	for (const feature of features) {
+		const row = document.createElement("li");
+		const name = document.createElement("span");
+		name.className = "name";
+		name.textContent = feature.name + (feature.level > 1 ? "  (L" + feature.level + ")" : "");
+		const score = document.createElement("span");
+		score.className = "score";
+		score.textContent = feature.score.toFixed(3) + "  / min " + feature.min_score.toFixed(2);
+		row.append(name, score);
+		featuresEl.append(row);
+	}
+	featuresEmptyEl.style.display = features.length ? "none" : "";
+
+	redraw();
+}
+
+async function post(path, body) {
+	statusEl.classList.remove("error");
+	try {
+		const response = await fetch(path, { method: "POST", body: body || "" });
+		if (!response.ok) throw new Error(response.status + " " + response.statusText);
+		render(await response.json());
+		statusEl.textContent = "";
+	} catch (error) {
+		statusEl.classList.add("error");
+		statusEl.textContent = "engine unreachable: " + error.message;
+	}
+}
+
+function sendStroke(stroke) {
+	post("/stroke", stroke.map(p => p.x.toFixed(2) + " " + p.y.toFixed(2)).join("\n"));
+}
+
+function clearAll() {
+	strokes = [];
+	current = null;
+	features = [];
+	redraw();
+	post("/clear");
+}
+
+pad.addEventListener("pointerdown", (event) => {
+	// Capture keeps a stroke alive when the pen leaves the canvas mid-drag.
+	// Not every pointer can be captured, and failing to is not worth losing
+	// the stroke over.
+	try { pad.setPointerCapture(event.pointerId); } catch (ignored) {}
+	current = [canvasPoint(event)];
+	redraw();
+});
+
+pad.addEventListener("pointermove", (event) => {
+	if (!current) return;
+	const point = canvasPoint(event);
+	const last = current[current.length - 1];
+	if (Math.hypot(point.x - last.x, point.y - last.y) < MIN_POINT_SPACING) return;
+	current.push(point);
+	redraw();
+});
+
+function endStroke() {
+	if (!current) return;
+	const stroke = current;
+	current = null;
+	if (stroke.length < MIN_STROKE_POINTS) {
+		redraw();
+		return;
+	}
+	strokes.push(stroke);
+	redraw();
+	sendStroke(stroke);
+}
+
+pad.addEventListener("pointerup", endStroke);
+pad.addEventListener("pointercancel", endStroke);
+
+document.getElementById("clear").addEventListener("click", clearAll);
+document.addEventListener("keydown", (event) => {
+	if (event.key === "c" || event.key === "C") clearAll();
+});
+
+// The engine's canvas outlives the page, so a reload has to reset it --
+// otherwise the strokes are gone from the screen but still in the engine, and
+// the next glyph gets recognised on top of the last one's leftovers.
+clearAll();
+</script>
+</body>
+</html>

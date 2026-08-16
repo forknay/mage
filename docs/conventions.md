@@ -20,22 +20,30 @@ res://
     ui/              hud.tscn, grimoire.tscn, menus, end screens
   scripts/
     autoload/        spell_registry.gd, audio_bus.gd, telemetry.gd
-    glyph/           the GDScript port of proto/glyph_core.js
+    glyph/           the draw canvas: glyph_plane.gd, glyph_canvas.gd
     components/      health.gd, interactable.gd
     spell_engine/    the native C++ recogniser, built by Jenova
   resources/
-    patterns/        pattern_dictionary.tres
     tuning/          scoring.tres, balance.tres, tempo.tres
     materials/       the flat-shaded palette set
   assets/
+    spell_engine/
+      templates/     one JSON per recognised shape
+      spells/        one JSON per spell layout
     audio/  models/  fonts/
 ```
+
+The spell data deliberately lives under `assets/`, not `resources/`: it is
+read by the C++ engine through `std::filesystem` from paths relative to the
+working directory, so it never becomes a Godot `Resource` and must not be
+moved into a `.pck`-only location. `docs/design/spells.md` has the formats.
 
 Rules:
 
 - **Scene and its script live together.** `player.tscn` next to `player.gd`,
   not split across `scenes/` and `scripts/`. The exception is `scripts/` for
-  code with no scene of its own (autoloads, components, the glyph port).
+  code with no scene of its own (autoloads, components, the glyph canvas,
+  the C++ engine).
 - **Nothing tunable is hardcoded.** Numbers that a playtest might change go
   in `resources/tuning/` as a `Resource`, so they are editable in the
   inspector without a rebuild.

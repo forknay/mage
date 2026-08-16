@@ -88,24 +88,27 @@ layer is both. Same for input actions — no raw keycodes in gameplay code.
 
 ## 7. Prototypes and tests
 
-The `proto/` directory holds the engine-free reference implementation and
-the two fun-spikes. It is not dead code — `glyph_core.js` is the
-specification the GDScript port must match.
+**Working on spells? Use the tester.** It compiles the same C++ engine
+sources the game runs and reads the same template and spell JSON, so a shape
+that recognises there recognises in game — without a Godot launch:
 
 ```bash
-node proto/glyph_core.test.js
+powershell -File tools/spell_tester/run.ps1
 ```
 
-Run it before touching anything in `proto/`. When the pipeline is ported
-to GDScript, port these assertions alongside it; they are the spec.
+`docs/design/spells.md` §5 is the loop for adding a shape or a spell, and
+§4 lists the tuning knobs. Note that the recognizer is C++ built by Jenova:
+after changing anything under `scripts/spell_engine/`, rebuild in the Godot
+editor or GDScript will not see it.
 
-Adding a spell pattern? Run the search first — it reports the safety
-margin, and a margin below 2 means one mis-stepped edge casts the wrong
-spell:
-
-```bash
-node proto/find_pattern.js --len 3,4,5
-```
+The `proto/` directory holds the **lattice-era** prototypes — `glyph_core.js`
+and `find_pattern.js` implement the input model of ADR 0001, which the
+implementation has moved away from. They are not the spec for anything being
+built now, and `node proto/glyph_core.test.js` passing says nothing about
+whether the game recognises a glyph. The two fun-spikes
+(`tempo_spike.html`, `memory_spike.html`) are still unrun and still worth
+running, with the caveat that P1's tracing times were measured against
+lattice input.
 
 ## 8. Commits
 

@@ -57,11 +57,11 @@ inline constexpr int LUT_SIZE = 32;
 
 // Default per-template acceptance threshold. THE MAIN "HOW PERMISSIVE IS
 // RECOGNITION OVERALL" KNOB.
-inline constexpr double DEFAULT_MIN_SCORE = 0.4;
+inline constexpr double DEFAULT_MIN_SCORE = 0.15;
 
 // Weight of the Gaussian aspect-ratio-deviation penalty applied on top of
 // the raw cloud-distance score.
-inline constexpr double ASPECT_RATIO_WEIGHT = 0.10;
+inline constexpr double ASPECT_RATIO_WEIGHT = 0.02;
 
 // =============================================================================
 // 3. Level composition (recognizer.* -- recognize_scene)
@@ -86,15 +86,15 @@ inline const std::unordered_map<int, double> DEFAULT_LEVEL_MERGE_THRESHOLDS = {
 
 // Distance (px) beyond which the exponential "unmatched feature" penalty
 // kicks in, in both the forward and reverse cloud-distance passes.
-inline constexpr double CLOUD_DISTANCE_PENALTY_THRESHOLD = 30.0;
+inline constexpr double CLOUD_DISTANCE_PENALTY_THRESHOLD = 55.0;
 
 // Exponent applied to the portion of a distance that exceeds
 // CLOUD_DISTANCE_PENALTY_THRESHOLD.
-inline constexpr double CLOUD_DISTANCE_EXPONENT = 2.5;
+inline constexpr double CLOUD_DISTANCE_EXPONENT = 1.4;
 
 // Blend weight between the mean adjusted distance and the max adjusted
 // distance (a Hausdorff-style component).
-inline constexpr double CLOUD_DISTANCE_MAX_WEIGHT = 0.25;
+inline constexpr double CLOUD_DISTANCE_MAX_WEIGHT = 0.15;
 
 // =============================================================================
 // 5. Template capture defaults
