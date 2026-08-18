@@ -70,9 +70,22 @@ inline constexpr double ASPECT_RATIO_WEIGHT = 0.02;
 // For each target Level > 1, how far apart (px) two lower-level features are
 // allowed to be and still get bundled together as candidates for that
 // higher-level composite gesture. A level with no entry here falls back to
-// `touch_threshold` at call time.
+// `touch_threshold` at call time -- which is only 8px, tight enough that it
+// effectively means "must already be touching." That default is fine for a
+// composite whose parts are meant to physically overlap/connect, but a
+// composite meant to be drawn as visibly SEPARATE, side-by-side pieces (e.g.
+// "lightning_sigil": three individual "lightning" bolts drawn apart from
+// each other, not touching) needs its own, larger entry here or it can never
+// bundle into one group in the first place -- see QRecognizer::compose_level
+// in recognizer.cpp, which looks up this map (falling back to
+// touch_threshold_) before it ever gets to trying template components.
 inline const std::unordered_map<int, double> DEFAULT_LEVEL_MERGE_THRESHOLDS = {
 	{2, 60.0},
+	// 150px comfortably covers three ~120px-wide bolts spaced ~130px apart
+	// bbox-edge-to-bbox-edge (see lightning_sigil.json), with margin for
+	// imprecise drawing, without being so loose it starts bundling
+	// unrelated features clear across the canvas.
+	{3, 150.0},
 };
 
 // =============================================================================

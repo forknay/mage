@@ -109,11 +109,34 @@ private:
 	// Registers every gesture template the recognizer should know about.
 	// Called once, from the constructor. EDIT THIS to register your own
 	// shapes -- see QRecognizer::add_template (recognizer.h) for the
-	// (name, strokes, level, min_score) contract. Ships with a small demo
-	// set (lines, a circle, a few open-angle shapes, plus the "exclaim"/
-	// "colon" level-2 composites) mirroring test_canvas.py's
-	// build_demo_recognizer, purely so the engine is usable/testable out
-	// of the box.
+	// (name, strokes, level, min_score, component_shapes) contract:
+	//
+	//   - A Level-1 template is recognized directly from its own raw
+	//     strokes -- nothing else needs to be true first.
+	//   - A Level-2+ template ALSO declares which already-recognized,
+	//     lower-level feature NAMES it's built from (e.g. "exclaim" =
+	//     one "line_vertical" feature + one "circle" feature, so its
+	//     component_shapes is {"line_vertical", "circle"}). At
+	//     composition time (QRecognizer::compose_level in recognizer.cpp)
+	//     the recognizer looks, within each spatially-close group of
+	//     already-accepted features, for every combination whose shape
+	//     names match some level-target template's declared components,
+	//     confirms each candidate combination via a real $Q pass against
+	//     that specific template, and -- when a group has more than one
+	//     viable composite -- keeps the single best one (more components
+	//     consumed wins; ties go to the higher $Q score) rather than
+	//     just whichever was found first. A composite that clears its
+	//     template's min_score always replaces the components it
+	//     consumed, regardless of how those components' own scores
+	//     compared to it.
+	//
+	// Loaded from assets/spell_engine/templates/*.json when built via
+	// SpellEngine's normal constructor path -- see template_from_json in
+	// spell_engine.cpp for the on-disk schema, including the "components"
+	// array that maps to component_shapes above. A Level-2+ template
+	// registered without "components" loads fine but can never actually
+	// be produced on a real canvas; register_templates() logs a loud
+	// warning for exactly that case.
 	void register_templates();
 
 	// Registers every spell the engine should be able to detect. Called
@@ -121,8 +144,10 @@ private:
 	// see spell_matcher.h's SpellDefinition/SpellFeatureSlot/
 	// RelativeDistanceConstraint for the full vocabulary (absolute
 	// distance+angle slots, relative "farther"/"closer" constraints, and
-	// "inside"/"outside" containment constraints). Ships with one
-	// illustrative demo spell built from the demo templates above.
+	// "inside"/"outside" containment constraints). Spells are matched
+	// against whatever features QRecognizer::features() currently holds,
+	// so a spell can reference a level-2+ composite feature by name (e.g.
+	// "exclaim") exactly the same way it would reference a level-1 one.
 	void register_spells();
 
 	QRecognizer recognizer_;

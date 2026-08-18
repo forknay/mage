@@ -75,6 +75,22 @@ struct Template {
 	int level = 0;                  // Number of physically-separate stroke units
 	double aspect_ratio = 1.0;      // Raw bounding box aspect ratio before uniform scaling
 	double min_score = config::DEFAULT_MIN_SCORE;
+
+	// For level >= 2 templates only: the multiset of already-recognized
+	// feature NAMES this gesture is composed of (e.g. {"line_vertical",
+	// "circle"} for "exclaim"). Order doesn't matter; duplicates do (two
+	// entries of "circle" means "needs two separately-recognized circle
+	// features nearby"). Left empty for Level-1 templates, which have no
+	// sub-features -- they're recognized directly from raw strokes.
+	//
+	// A Level-2+ template registered with this left empty can still be
+	// added to `templates_` (add_template doesn't reject it), but
+	// QRecognizer::compose_level can NEVER produce it: composition only
+	// ever considers templates that declare components, since there is no
+	// other way to know which lower-level features to look for. See
+	// SpellEngine::register_templates in spell_engine.cpp, which logs a
+	// loud warning for exactly this case when loading from JSON.
+	std::vector<std::string> component_shapes;
 };
 
 // -----------------------------------------------------------------------

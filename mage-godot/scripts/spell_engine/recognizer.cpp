@@ -5,6 +5,7 @@
 #include <cmath>
 #include <deque>
 #include <numeric>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <JenovaSDK.h>
@@ -26,6 +27,38 @@ namespace {
 // tuning at the same time. Flip back to `false` once you're done debugging
 // -- shipping with this on means the recognizer accepts literally anything.
 constexpr bool kDisableRecognitionThreshold = false;
+
+// Invokes `visit` once for every combination of size `r` chosen from
+// `items` (each combination passed as the literal chosen items, not
+// indices-into-indices), in lexicographic order. Deliberately exhaustive --
+// unlike a "find the first hit" search, this always walks every
+// combination, because callers that want the single BEST one (see
+// QRecognizer::for_each_matching_composite / compose_level) need to compare
+// every candidate rather than stop at whichever one happens to come first.
+void for_each_combination(const std::vector<int>& items, size_t r,
+						   const std::function<void(const std::vector<int>&)>& visit) {
+	if (r == 0) {
+		visit({});
+		return;
+	}
+	if (r > items.size()) return;
+
+	std::vector<int> combo(r);
+	std::function<void(size_t, size_t)> rec = [&](size_t start, size_t depth) {
+		if (depth == r) {
+			visit(combo);
+			return;
+		}
+		// `items.size() - (r - depth)` keeps enough items left for the
+		// remaining slots -- the usual combinations pruning.
+		for (size_t i = start; i <= items.size() - (r - depth); ++i) {
+			combo[depth] = items[i];
+			rec(i + 1, depth + 1);
+		}
+	};
+	rec(0, 0);
+}
+
 }  // namespace
 
 // =============================================================================
@@ -69,7 +102,7 @@ QRecognizer::QRecognizer(int num_resample_points, double frame_size, int lut_siz
 // =============================================================================
 
 void QRecognizer::add_template(const std::string& name, const std::vector<Stroke>& strokes, int level,
-								double min_score) {
+								double min_score, std::vector<std::string> component_shapes) {
 	auto [merged_strokes, actual_units] = merge_and_count_touch_units(strokes, touch_threshold_, endpoint_touch_threshold_);
 
 	int resolved_level = level;
@@ -99,12 +132,13 @@ void QRecognizer::add_template(const std::string& name, const std::vector<Stroke
 	t.level = resolved_level;
 	t.aspect_ratio = aspect_ratio;
 	t.min_score = min_score;
+	t.component_shapes = std::move(component_shapes);
 	templates_.push_back(std::move(t));
 }
 
 void QRecognizer::add_precomputed_template(const std::string& name, const std::vector<Point>& processed_points,
 											const std::vector<int64_t>& lut, int level, double aspect_ratio,
-											double min_score) {
+											double min_score, std::vector<std::string> component_shapes) {
 	std::vector<double> xs, ys;
 	xy(processed_points, &xs, &ys);
 
@@ -118,6 +152,7 @@ void QRecognizer::add_precomputed_template(const std::string& name, const std::v
 	t.level = level;
 	t.aspect_ratio = aspect_ratio;
 	t.min_score = min_score;
+	t.component_shapes = std::move(component_shapes);
 	templates_.push_back(std::move(t));
 }
 
@@ -359,38 +394,175 @@ std::vector<std::shared_ptr<Feature>> QRecognizer::compose_from_atomic(
 	return out;
 }
 
+void QRecognizer::for_each_matching_composite(const std::vector<std::shared_ptr<Feature>>& pool,
+											   const std::vector<int>& named_idx, const Template& tmpl,
+											   int target_level,
+											   const std::function<void(CompositeCandidate)>& visit) const {
+	// Required shape -> how many separately-recognized features of that
+	// shape this template needs (duplicates in component_shapes collapse
+	// into a count here, e.g. ["circle","circle"] -> {"circle": 2}).
+	std::unordered_map<std::string, int> required;
+	for (const auto& shape : tmpl.component_shapes) required[shape]++;
+
+	// Bucket the pool's named/accepted features by their own shape name.
+	// A Feature has exactly one name, so buckets for different required
+	// shapes are automatically disjoint -- no pool index can be offered
+	// to two different buckets.
+	std::unordered_map<std::string, std::vector<int>> available;
+	for (int idx : named_idx) {
+		available[*pool[static_cast<size_t>(idx)]->result.name].push_back(idx);
+	}
+	for (const auto& kv : required) {
+		auto it = available.find(kv.first);
+		if (it == available.end() || static_cast<int>(it->second.size()) < kv.second) {
+			return;  // pool can't possibly satisfy this template -- nothing to enumerate
+		}
+	}
+
+	std::vector<std::pair<std::string, int>> req_list(required.begin(), required.end());
+	std::vector<int> chosen;
+	std::vector<std::string> candidate_names{tmpl.name};
+
+	// Recurses bucket-by-bucket (one required shape at a time), building
+	// up `chosen` via the cross-product of each bucket's combinations.
+	// Once every bucket has contributed its picks, `chosen` names exactly
+	// the right multiset of shapes -- at that point (and ONLY at that
+	// point) is $Q actually invoked, so geometry is checked once per
+	// complete candidate subset rather than once per partial pick. Every
+	// subset that passes gets reported via `visit`; the search keeps
+	// going afterward instead of stopping, so a caller wanting the best
+	// of several matches has all of them to compare.
+	std::function<void(size_t)> recurse = [&](size_t bucket_i) {
+		if (bucket_i == req_list.size()) {
+			// Cheap pre-check before paying for a real $Q pass: the
+			// physical stroke-unit counts of the chosen features must add
+			// up to target_level, or recognize() is guaranteed to reject
+			// this subset outright (wrong unit count for that level).
+			int unit_sum = 0;
+			for (int idx : chosen) unit_sum += pool[static_cast<size_t>(idx)]->level;
+			if (unit_sum != target_level) return;
+
+			std::vector<Stroke> combined_strokes;
+			for (int idx : chosen) {
+				const auto& fs = pool[static_cast<size_t>(idx)]->strokes;
+				combined_strokes.insert(combined_strokes.end(), fs.begin(), fs.end());
+			}
+			// Preserve chronological drawing order across the merged
+			// strokes -- matters for $Q's resampling/orientation.
+			std::stable_sort(combined_strokes.begin(), combined_strokes.end(),
+							  [](const Stroke& a, const Stroke& b) { return a.seq < b.seq; });
+
+			auto result_opt = try_recognize(combined_strokes, target_level, &candidate_names);
+			if (!result_opt.has_value() || !result_opt->accepted) return;
+
+			std::vector<Point> combined_points;
+			for (int idx : chosen) {
+				const auto& fp = pool[static_cast<size_t>(idx)]->points;
+				combined_points.insert(combined_points.end(), fp.begin(), fp.end());
+			}
+
+			auto feat_out = std::make_shared<Feature>();
+			feat_out->cluster_id = pool[static_cast<size_t>(chosen.front())]->cluster_id;
+			feat_out->level = target_level;
+			feat_out->result = *result_opt;
+			feat_out->points = std::move(combined_points);
+			feat_out->strokes = std::move(combined_strokes);
+			feat_out->components.reserve(chosen.size());
+			for (int idx : chosen) feat_out->components.push_back(pool[static_cast<size_t>(idx)]);
+
+			CompositeCandidate cand;
+			cand.feature = std::move(feat_out);
+			cand.used_indices = chosen;
+			visit(std::move(cand));
+			return;
+		}
+
+		const std::string& shape = req_list[bucket_i].first;
+		int count = req_list[bucket_i].second;
+		for_each_combination(available[shape], static_cast<size_t>(count), [&](const std::vector<int>& combo) {
+			chosen.insert(chosen.end(), combo.begin(), combo.end());
+			recurse(bucket_i + 1);
+			chosen.resize(chosen.size() - combo.size());
+		});
+	};
+
+	recurse(0);
+}
+
 std::vector<std::shared_ptr<Feature>> QRecognizer::compose_level(
 	const std::vector<std::shared_ptr<Feature>>& current_features, int target_level, double gap,
 	std::unordered_map<std::pair<const Feature*, const Feature*>, bool, FeaturePtrPairHash>* touch_cache) const {
+	// Only templates that declare what they're made of can ever be
+	// produced at this level -- see Template::component_shapes.
+	std::vector<const Template*> level_templates;
+	for (const auto& t : templates_) {
+		if (t.level == target_level && !t.component_shapes.empty()) level_templates.push_back(&t);
+	}
+
 	auto groups = bundle_features_by_proximity(current_features, gap, touch_cache);
 	std::vector<std::shared_ptr<Feature>> next_features;
 
-	for (const auto& group : groups) {
-		int total_units = 0;
-		for (const auto& feat : group) total_units += feat->level;
+	if (level_templates.empty()) {
+		for (auto& group : groups) next_features.insert(next_features.end(), group.begin(), group.end());
+		return next_features;
+	}
 
-		if (group.size() > 1 && total_units == target_level) {
-			std::vector<Stroke> combined_strokes;
-			for (const auto& feat : group) combined_strokes.insert(combined_strokes.end(), feat->strokes.begin(), feat->strokes.end());
+	// A composite that clears its template's min_score always beats every
+	// one of its components, no exceptions -- there is no later step that
+	// compares a composite's score against the atomic pieces it consumed.
+	// The only real decision left is which of possibly SEVERAL viable
+	// composites in the same spatial group to take first when more than
+	// one is available: prefer the one consuming more components (the
+	// structurally "bigger" match), and break ties by higher $Q score.
+	auto is_better = [](const CompositeCandidate& a, const CompositeCandidate& b) {
+		if (a.used_indices.size() != b.used_indices.size()) {
+			return a.used_indices.size() > b.used_indices.size();
+		}
+		return a.feature->result.score > b.feature->result.score;
+	};
 
-			auto result_opt = try_recognize(combined_strokes, target_level);
-			if (result_opt.has_value() && result_opt->accepted) {
-				std::vector<Point> combined_points;
-				for (const auto& feat : group) combined_points.insert(combined_points.end(), feat->points.begin(), feat->points.end());
+	for (auto& group : groups) {
+		std::vector<std::shared_ptr<Feature>> pool = group;
 
-				auto feat_out = std::make_shared<Feature>();
-				feat_out->cluster_id = group.front()->cluster_id;
-				feat_out->level = target_level;
-				feat_out->result = *result_opt;
-				feat_out->points = std::move(combined_points);
-				feat_out->strokes = std::move(combined_strokes);
-				feat_out->components = group;
-				next_features.push_back(std::move(feat_out));
-				continue;
+		// Repeatedly pull the single BEST composite out of the current
+		// pool -- searching every registered target-level template and
+		// every valid combination of already-accepted features each pass,
+		// not just the first hit -- remove its components, and search
+		// again. A later pass never has to reconsider features a stronger
+		// match already consumed, so composites can nest cleanly even
+		// when several candidates overlap in which atomic features they'd
+		// like to use.
+		bool progress = true;
+		while (progress) {
+			progress = false;
+
+			std::vector<int> named_idx;
+			for (size_t i = 0; i < pool.size(); ++i) {
+				if (pool[i]->result.accepted) named_idx.push_back(static_cast<int>(i));
+			}
+			if (named_idx.empty()) break;
+
+			std::optional<CompositeCandidate> best;
+			for (const Template* tmpl : level_templates) {
+				if (named_idx.size() < tmpl->component_shapes.size()) continue;
+				for_each_matching_composite(pool, named_idx, *tmpl, target_level, [&](CompositeCandidate cand) {
+					if (!best.has_value() || is_better(cand, *best)) {
+						best = std::move(cand);
+					}
+				});
+			}
+
+			if (best.has_value()) {
+				std::vector<int> used = best->used_indices;
+				std::sort(used.begin(), used.end(), std::greater<int>());
+				for (int idx : used) pool.erase(pool.begin() + idx);
+
+				next_features.push_back(std::move(best->feature));
+				progress = true;
 			}
 		}
 
-		next_features.insert(next_features.end(), group.begin(), group.end());
+		next_features.insert(next_features.end(), pool.begin(), pool.end());
 	}
 
 	return next_features;
@@ -464,9 +636,10 @@ std::vector<const Template*> QRecognizer::candidates_at_level(int level,
 	return candidates;
 }
 
-std::optional<RecognitionResult> QRecognizer::try_recognize(const std::vector<Stroke>& strokes, int level) const {
+std::optional<RecognitionResult> QRecognizer::try_recognize(const std::vector<Stroke>& strokes, int level,
+															  const std::vector<std::string>* candidate_names) const {
 	try {
-		return recognize(strokes, level);
+		return recognize(strokes, level, candidate_names);
 	} catch (const std::invalid_argument&) {
 		return std::nullopt;
 	}

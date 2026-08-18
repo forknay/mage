@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -47,6 +48,17 @@ struct FeaturePtrPairHash {
 	}
 };
 
+// One candidate way of building a level>=2 composite feature out of
+// already-recognized lower-level features sitting in the same spatial
+// group -- see QRecognizer::for_each_matching_composite. `used_indices`
+// are indices into whatever `pool` vector the search was run against, NOT
+// into the group's original feature list, since the pool shrinks as
+// composites get consumed (see compose_level).
+struct CompositeCandidate {
+	std::shared_ptr<Feature> feature;
+	std::vector<int> used_indices;
+};
+
 class QRecognizer {
 public:
 	explicit QRecognizer(int num_resample_points = config::NUM_RESAMPLE_POINTS,
@@ -65,16 +77,21 @@ public:
 
 	// Registers a new template, inferring stroke units (level) if not
 	// provided (pass level < 0 for "infer", mirroring Python's
-	// level=None).
+	// level=None). `component_shapes` only matters for level >= 2
+	// templates -- see Template::component_shapes for the contract
+	// (leaving it empty on a level >= 2 template means that template can
+	// never actually be produced by compose_level).
 	void add_template(const std::string& name, const std::vector<Stroke>& strokes, int level = -1,
-					   double min_score = config::DEFAULT_MIN_SCORE);
+					   double min_score = config::DEFAULT_MIN_SCORE,
+					   std::vector<std::string> component_shapes = {});
 
 	// Fast-path registration from cache, skipping preprocessing and LUT
 	// construction. `lut` must be a flat lut_size*lut_size buffer,
 	// row-major (x-major), matching create_lut's output layout.
 	void add_precomputed_template(const std::string& name, const std::vector<Point>& processed_points,
 								   const std::vector<int64_t>& lut, int level, double aspect_ratio,
-								   double min_score = config::DEFAULT_MIN_SCORE);
+								   double min_score = config::DEFAULT_MIN_SCORE,
+								   std::vector<std::string> component_shapes = {});
 
 	const std::vector<Template>& templates() const { return templates_; }
 
@@ -128,9 +145,39 @@ private:
 		const std::unordered_map<int, double>* level_merge_thresholds, double min_score,
 		std::unordered_map<std::pair<const Feature*, const Feature*>, bool, FeaturePtrPairHash>* touch_cache) const;
 
+	// Builds every level==target_level Feature that can be assembled out
+	// of `current_features`. Two-stage per spatial group (see
+	// bundle_features_by_proximity): first, EVERY registered target-level
+	// template is checked against EVERY combination of already-accepted
+	// features in the group whose shape names match that template's
+	// declared Template::component_shapes (via
+	// for_each_matching_composite); each combination that also passes a
+	// real $Q confirmation against that specific template becomes a
+	// CompositeCandidate. Second, among however many candidates turned up
+	// in that group, the single BEST one is kept -- "best" meaning more
+	// components consumed first, ties broken by higher $Q score (see the
+	// comparator inside compose_level's .cpp definition) -- and its
+	// components are removed from the pool before repeating the whole
+	// search on what's left. A composite that wins this search always
+	// replaces its components outright: there is no later step that lets
+	// an atomic feature's own score overrule a composite that already
+	// consumed it.
 	std::vector<std::shared_ptr<Feature>> compose_level(
 		const std::vector<std::shared_ptr<Feature>>& current_features, int target_level, double gap,
 		std::unordered_map<std::pair<const Feature*, const Feature*>, bool, FeaturePtrPairHash>* touch_cache) const;
+
+	// Enumerates EVERY subset of `pool` (restricted to the indices listed
+	// in `named_idx`, i.e. only features that already have an accepted
+	// name) whose shape-name multiset exactly matches `tmpl`'s declared
+	// Template::component_shapes, confirms each via a real $Q pass
+	// restricted to `tmpl` specifically (see QRecognizer::recognize's
+	// `candidate_names` filter), and invokes `visit` once per subset that
+	// passes. Deliberately does NOT stop at the first match -- callers
+	// (compose_level) that want the single best result compare every
+	// `visit` call themselves, so this always does the full search.
+	void for_each_matching_composite(const std::vector<std::shared_ptr<Feature>>& pool,
+									  const std::vector<int>& named_idx, const Template& tmpl, int target_level,
+									  const std::function<void(CompositeCandidate)>& visit) const;
 
 	std::vector<std::vector<std::shared_ptr<Feature>>> bundle_features_by_proximity(
 		const std::vector<std::shared_ptr<Feature>>& features, double threshold,
@@ -138,7 +185,8 @@ private:
 
 	std::vector<const Template*> candidates_at_level(int level, const std::vector<std::string>* candidate_names) const;
 
-	std::optional<RecognitionResult> try_recognize(const std::vector<Stroke>& strokes, int level) const;
+	std::optional<RecognitionResult> try_recognize(const std::vector<Stroke>& strokes, int level,
+													 const std::vector<std::string>* candidate_names = nullptr) const;
 
 	// Returns (best_template, best_distance, best_score). best_template
 	// is nullptr if `candidates` is empty (mirrors recognize()'s

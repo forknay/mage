@@ -123,11 +123,25 @@ Stroke stroke_from_json(const json& j) {
 // strokes look like a real drawn segment, which corrupts the arc-length
 // resampling the whole recognizer is built on (plus and triangleRune are
 // both multi-stroke).
+//
+// A THIRD, orthogonal field applies to either shape once level >= 2:
+//
+//   "components": ["line_vertical", "circle"]
+//
+// -- the list of already-recognized, lower-level feature NAMES this
+// gesture is built from (see Template::component_shapes in
+// gesture_types.hpp for the full contract, and QRecognizer::compose_level
+// in recognizer.cpp for how it's used at composition time). "strokes"/
+// "points" is still the gesture's own raw drawn geometry either way --
+// that's what the final $Q confirmation pass scores against -- but for a
+// level>=2 template ONLY "components" tells the recognizer which
+// sub-features to look for nearby in the first place.
 struct TemplateData {
 	std::string name;
 	std::vector<Stroke> strokes;
 	int level = -1;  // <0 means "infer from the geometry" (see add_template)
 	double min_score = config::DEFAULT_MIN_SCORE;
+	std::vector<std::string> component_shapes;  // level >= 2 only; see above
 };
 
 // Splits a flat "points" array into one Stroke per contiguous run of equal
@@ -160,6 +174,12 @@ TemplateData template_from_json(const json& j) {
 	t.name = j.at("name").get<std::string>();
 	t.level = j.value("level", -1);
 	t.min_score = j.value("min_score", config::DEFAULT_MIN_SCORE);
+
+	if (j.contains("components")) {
+		for (const auto& cj : j.at("components")) {
+			t.component_shapes.push_back(cj.get<std::string>());
+		}
+	}
 
 	if (j.contains("strokes")) {
 		for (const auto& sj : j.at("strokes")) {
@@ -270,8 +290,8 @@ SpellEngine::SpellEngine() : recognizer_(config::NUM_RESAMPLE_POINTS) {
 
 void SpellEngine::register_templates() {
 	// Loads every *.json file under kTemplatesDir (see the loader helpers
-	// above for the accepted schemas) and registers each as a gesture
-	// template.
+	// above for the accepted schemas, including the level>=2-only
+	// "components" field) and registers each as a gesture template.
 	//
 	// A failure on ONE file only skips that file -- it must never abort the
 	// whole loop. Letting it abort meant a single malformed template left
@@ -285,9 +305,25 @@ void SpellEngine::register_templates() {
 	for (const auto& path : paths) {
 		try {
 			TemplateData t = template_from_json(load_json_file(path));
-			recognizer_.add_template(t.name, t.strokes, t.level, t.min_score);
+			recognizer_.add_template(t.name, t.strokes, t.level, t.min_score, t.component_shapes);
+
+			// A level>=2 template with no declared components can be
+			// registered (add_template doesn't reject it -- it's not
+			// technically invalid data), but QRecognizer::compose_level
+			// only ever searches templates that DO declare components, so
+			// a template like this can never actually be produced on a
+			// real canvas. That's a silent dead template unless flagged
+			// here.
+			const Template& registered = recognizer_.templates().back();
+			if (registered.level >= 2 && registered.component_shapes.empty()) {
+				jenova::sdk::Output(
+					"spell_engine: WARNING template '%s' registered at level=%d with no 'components' -- "
+					"it can never be recognized (see QRecognizer::compose_level in recognizer.cpp)",
+					registered.name.c_str(), registered.level);
+			}
+
 			jenova::sdk::Output("spell_engine: registered template '%s' (level=%d, strokes=%d, min_score=%.2f)",
-								 t.name.c_str(), t.level, static_cast<int>(t.strokes.size()), t.min_score);
+								 t.name.c_str(), registered.level, static_cast<int>(t.strokes.size()), t.min_score);
 		} catch (const std::exception& e) {
 			++failed;
 			jenova::sdk::Output("spell_engine: SKIPPED template '%s': %s", path.string().c_str(), e.what());
