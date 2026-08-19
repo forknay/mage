@@ -6,6 +6,7 @@
 [ext_resource type="PackedScene" uid="uid://bnex0kfkhs3g8" path="res://scenes/enemies/enemy.tscn" id="4_1bvp3"]
 [ext_resource type="PackedScene" path="res://scenes/level/props/torch.tscn" id="5_lquwl"]
 [ext_resource type="PackedScene" path="res://scenes/level/props/chest.tscn" id="6_7mycd"]
+[ext_resource type="PackedScene" uid="uid://cqlgcg2plg3fw" path="res://mage_enemy.tscn" id="7_2hqms"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 
@@ -34,6 +35,17 @@ size = Vector3(50, 1, 50)
 vertices = PackedVector3Array(-2.25, 0.5, -16.75, 7, 0.5, -16.5, 7.25, 0.5, -17, -2.25, 0.5, -25.75, -8.25, 0.5, -35.25, -8.25, 0.5, -26, 13, 0.5, -17, 13, 0.5, -35.25, -1, 0.5, -9.5, -0.75, 0.5, -7.5, 1, 0.5, -7.5, 1.25, 0.5, -9.5, -2.75, 0.5, -15.75, -4.25, 0.5, -15.75, -4, 0.5, -9.5, 7, 0.5, -9.5, -15.75, 0.5, -7.5, -12.5, 0.5, -7.25, -12.25, 0.5, -9.5, -15.75, 0.5, -11.25, -9.75, 0.5, -15.75, -9.75, 0.5, -11.75, -10.25, 0.5, -11.25, -15.75, 0.5, -5.75, -12.25, 0.5, -5.25, -6.5, 0.5, 6.75, -6.5, 0.5, -5.25, -16.25, 0.5, -5.25, -21.75, 0.5, 6.75, -21.75, 0.5, -5.25, -0.75, 0.5, -2.75, 1, 0.5, -2.5, -2.25, 0.5, -2.25, -2.25, 0.5, 4, 2.5, 0.5, 4, 2.5, 0.5, -2.25)
 polygons = [PackedInt32Array(1, 0, 2), PackedInt32Array(2, 0, 3), PackedInt32Array(3, 5, 4), PackedInt32Array(2, 3, 6), PackedInt32Array(6, 3, 7), PackedInt32Array(7, 3, 4), PackedInt32Array(9, 8, 10), PackedInt32Array(10, 8, 11), PackedInt32Array(12, 0, 8), PackedInt32Array(8, 0, 11), PackedInt32Array(13, 12, 14), PackedInt32Array(14, 12, 8), PackedInt32Array(15, 11, 1), PackedInt32Array(1, 11, 0), PackedInt32Array(17, 16, 18), PackedInt32Array(18, 16, 19), PackedInt32Array(20, 13, 21), PackedInt32Array(21, 13, 14), PackedInt32Array(19, 22, 18), PackedInt32Array(18, 22, 14), PackedInt32Array(14, 22, 21), PackedInt32Array(16, 17, 23), PackedInt32Array(23, 17, 24), PackedInt32Array(24, 26, 25), PackedInt32Array(23, 24, 27), PackedInt32Array(27, 24, 28), PackedInt32Array(28, 24, 25), PackedInt32Array(28, 29, 27), PackedInt32Array(9, 10, 30), PackedInt32Array(30, 10, 31), PackedInt32Array(31, 35, 30), PackedInt32Array(30, 35, 32), PackedInt32Array(32, 35, 34), PackedInt32Array(32, 34, 33)]
 agent_height = 0.5
+
+[sub_resource type="Curve3D" id="Curve3D_tg3de"]
+closed = true
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 2.8383129, -0.69826436, 0.451334, 0, 0, 0, 0, 0, 0, 3.7644827, -0.69826436, -1.3103418, 0, 0, 0, 0, 0, 0, 5.3032, -0.69826436, -4.3989925, 0, 0, 0, 0, 0, 0, 9.585079, -0.69826436, -9.581671, 0, 0, 0, 0, 0, 0, 11.768915, -0.6982641, -16.030361, 0, 0, 0, 0, 0, 0, 12.273108, -0.6080997, -23.577608, 0, 0, 0, 0, 0, 0, 6.9161034, -0.6982641, -21.882929, 0, 0, 0, 0, 0, 0, 3.1493142, -0.6982639, -21.033388, 0, 0, 0, 0, 0, 0, 3.4103687, -0.69826436, -14.754005, 0, 0, 0, 0, 0, 0, 4.938431, -0.69826436, -10.501486, 0, 0, 0, 0, 0, 0, 3.9723976, -0.69826436, -5.713003, 0, 0, 0, 0, 0, 0, 2.03818, -0.6982646, -6.288147, 0, 0, 0, 0, 0, 0, 0.7564026, -0.69826436, -8.419006, 0, 0, 0, 0, 0, 0, 0.39569426, 1.4044266, 0.1436758, 0, 0, 0, 0, 0, 0, 0.30092525, 1.3981268, 0.30003357, 0, 0, 0, 0, 0, 0, 0.1962024, 1.212774, 0.45321083, 0, 0, 0, 0, 0, 0, 0.17167008, 1.0173311, 0.4696045, 0, 0, 0, 0, 0, 0, 0.415442, 0.9428425, 0.27822208, 0, 0, 0, 0, 0, 0, 1.5182598, -0.6982641, -3.9072247, 0, 0, 0, 0, 0, 0, 2.29962, -0.69826436, -2.6244478, 0, 0, 0, 0, 0, 0, 0.7806139, -0.6982646, -1.6450377),
+"tilts": PackedFloat32Array(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+}
+point_count = 24
+
+[sub_resource type="GDScript" id="GDScript_2hqms"]
+script/source = "extends PathFollow3D"
 
 [node name="Main" type="Node3D" unique_id=1304760361]
 script = ExtResource("1_h2yge")
@@ -87,3 +99,13 @@ transform = Transform3D(1.1924881e-08, 0, -1, 0, 1, 0, 1, 0, 1.1924881e-08, -2.9
 
 [node name="Chest" parent="." unique_id=384210788 instance=ExtResource("6_7mycd")]
 transform = Transform3D(1.1924881e-08, 0, -1, 0, 1, 0, 1, 0, 1.1924881e-08, -2.655767, 0.019381493, -22.93111)
+
+[node name="Path3D" type="Path3D" parent="." unique_id=2008881725]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.91773057, 0.8888931, -12.400244)
+curve = SubResource("Curve3D_tg3de")
+
+[node name="PathFollow3D" type="PathFollow3D" parent="Path3D" unique_id=1666137844]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 0, 0, 0)
+script = SubResource("GDScript_2hqms")
+
+[node name="CharacterBody3D" parent="Path3D/PathFollow3D" unique_id=760959994 instance=ExtResource("7_2hqms")]

@@ -5,29 +5,22 @@ signal player_reached
 ## Emitted once when the player gets away again.
 signal player_lost
 
-@export var speed: float = 3.0
-## How far the enemy can see, in meters.
-@export var sight_range: float = 20.0
-## Full width of the vision cone, in degrees.
-@export var sight_angle: float = 110.0
-## Height of the eyes above the enemy's origin.
-@export var eye_height: float = 1.5
-## How long the enemy keeps chasing after losing sight of the player.
-@export var memory_time: float = 3.0
-## How fast the enemy turns to face where it is going, in radians per second.
-@export var turn_speed: float = 6.0
 ## How fast the enemy sweeps its view while it has nowhere to go, in radians
 ## per second of sweep phase.
 @export var scan_speed: float = 1.2
 ## How far to either side the enemy sweeps while scanning, in degrees.
 @export var scan_arc: float = 140.0
+@export var speed: float = 3.0
+## How "res://scenes/level/"long the enemy keeps chasing after losing sight of the player.
+@export var memory_time: float = 3.0
+## How fast the enemy turns to face where it is going, in radians per second.
+@export var turn_speed: float = 6.0
 ## Horizontal distance that counts as touching the player.
 @export var contact_distance: float = 1.2
-## Layers the sight ray tests against. Deliberately excludes the enemy layer so
-## that enemies never block each other's view of the player.
-@export_flags_3d_physics var sight_mask: int = 1 | 2
+
 
 @onready var nav_agent: NavigationAgent3D = $NavigationAgent3D
+@onready var vision_agent: VisionAgent3D = $VisionAgent3D
 
 var player: Node3D
 var time_since_seen: float = INF
@@ -47,7 +40,7 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	var sees_player: bool = can_see_player()
+	var sees_player: bool = vision_agent.can_see_player()
 	if sees_player:
 		time_since_seen = 0.0
 		# Only refreshed while visible, so losing sight sends the enemy to the
@@ -132,32 +125,11 @@ func _on_player_reached() -> void:
 func _on_player_lost() -> void:
 	player_lost.emit()
 
-
-func can_see_player() -> bool:
-	if player == null:
-		return false
-
-	var eye: Vector3 = global_position + Vector3.UP * eye_height
-	var to_player: Vector3 = player.global_position - eye
-	if to_player.length() > sight_range:
-		return false
-
-	# -Z is forward in Godot. Compared on the horizontal plane so that looking
-	# up or down a slope does not narrow the cone.
-	var forward: Vector3 = -global_basis.z
-	var flat_forward: Vector3 = Vector3(forward.x, 0.0, forward.z).normalized()
-	var flat_to_player: Vector3 = Vector3(to_player.x, 0.0, to_player.z).normalized()
-	if flat_forward.angle_to(flat_to_player) > deg_to_rad(sight_angle) / 2.0:
-		return false
-
-	# Only world geometry can block the view. Self is excluded as well, in case
-	# the enemy layer is ever added back into sight_mask.
-	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(
-		eye, player.global_position, sight_mask, [get_rid()]
-	)
-	var hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(query)
-	return not hit.is_empty() and hit["collider"] == player
-
+func face_direction(direction: Vector3, delta: float) -> void:
+	if direction.is_zero_approx():
+		return
+	var target_yaw: float = atan2(-direction.x, -direction.z)
+	rotation.y = rotate_toward(rotation.y, target_yaw, turn_speed * delta)
 
 ## Sweeps the vision cone back and forth while the enemy is standing still, so
 ## that a lost player can be spotted again. The sweep is centred on whichever
@@ -169,10 +141,3 @@ func scan(delta: float) -> void:
 		scan_phase = 0.0
 	scan_phase += scan_speed * delta
 	rotation.y = scan_center_yaw + sin(scan_phase) * deg_to_rad(scan_arc) * 0.5
-
-
-func face_direction(direction: Vector3, delta: float) -> void:
-	if direction.is_zero_approx():
-		return
-	var target_yaw: float = atan2(-direction.x, -direction.z)
-	rotation.y = rotate_toward(rotation.y, target_yaw, turn_speed * delta)

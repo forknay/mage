@@ -31,4 +31,4 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 0)
 [node name="SpellCaster" parent="." unique_id=1264348534 node_paths=PackedStringArray("camera") instance=ExtResource("2_caster")]
 camera = NodePath("../Head/Camera3D")
 
-[node name="Crosshair" parent="." instance=ExtResource("3_crosshair")]
+[node name="Crosshair" parent="." unique_id=496534504 instance=ExtResource("3_crosshair")]

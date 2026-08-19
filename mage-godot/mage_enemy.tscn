@@ -1,0 +1,22 @@
+[gd_scene format=3 uid="uid://cqlgcg2plg3fw"]
+
+[ext_resource type="Script" uid="uid://duk84w3qyke25" path="res://mage_enemy.gd" id="1_o42u1"]
+[ext_resource type="Script" uid="uid://b7qk7juyuy0g4" path="res://scenes/utils/VisionAgent3D.gd" id="2_hmyd3"]
+[ext_resource type="PackedScene" uid="uid://dnsyelmec0ecm" path="res://assets/models/stylized_low_poly_mage__game_character.glb" id="3_jylbr"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_tg3de"]
+
+[node name="CharacterBody3D" type="CharacterBody3D" unique_id=1754854942]
+script = ExtResource("1_o42u1")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=27629971]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.005910635, 0.5828651, 0.0155415535)
+shape = SubResource("CapsuleShape3D_tg3de")
+
+[node name="VisionAgent3D" type="RayCast3D" parent="." unique_id=491277216]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.004037738, -0.0012196302, -1.1920929e-07)
+script = ExtResource("2_hmyd3")
+metadata/_custom_type_script = "uid://b7qk7juyuy0g4"
+
+[node name="Visual" parent="." unique_id=383003008 instance=ExtResource("3_jylbr")]
+transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0.03481233, 0)
