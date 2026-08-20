@@ -101,6 +101,35 @@ powershell -File tools/spell_tester/run.ps1
 after changing anything under `scripts/spell_engine/`, rebuild in the Godot
 editor or GDScript will not see it.
 
+### Working without the C++ engine
+
+Jenova has no macOS build, so a Mac cannot compile or load `GodotSpellEngine`.
+It does not have to: nothing outside `scripts/glyph/spell_recognizer.gd` names
+that class, so when the extension is missing the recogniser falls back to a
+stub that accepts strokes and recognises nothing. **No setup — clone, open,
+run.** `Jenova/` is gitignored and must stay off the Mac; a copied-in
+`Jenova.Runtime.gdextension` with no macOS library in it is the one thing that
+will throw errors at startup.
+
+Drawing, the canvas, casting, movement, enemies, level and UI all behave
+normally under the stub. What you lose is recognition itself: the on-screen
+readout always says "(nothing recognised)" and `match_spell()` returns `""`,
+so every glyph fires the placeholder bolt. A `push_warning` at startup says
+which backend is live, so a stub is never mistaken for a recogniser that
+stopped matching.
+
+Force the choice with the `MAGE_SPELL_ENGINE` environment variable:
+
+| Value | Effect |
+|---|---|
+| unset | Native if the module is built, stub otherwise. What everyone wants. |
+| `stub` | Stub even on Windows — check that a change survives without the recogniser before you hand it to the Mac. |
+| `native` | Log an error instead of falling back, so a failed Jenova build cannot masquerade as a stub run. |
+
+The tester in §7 is Windows-only (`run.ps1`, winsock, `.exe`), so **spell and
+template work still has to happen on a Windows machine.** Split the tracks
+accordingly.
+
 The `proto/` directory holds the **lattice-era** prototypes — `glyph_core.js`
 and `find_pattern.js` implement the input model of ADR 0001, which the
 implementation has moved away from. They are not the spec for anything being

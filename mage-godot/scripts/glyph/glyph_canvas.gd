@@ -25,8 +25,10 @@ var min_point_spacing: float = 4.0
 var _current: PackedVector2Array = PackedVector2Array()
 var _stroke_open: bool = false
 
-## Instance of your C++ Spell Engine
-var spell_engine: GodotSpellEngine = GodotSpellEngine.new()
+## The recogniser. Native C++ where Jenova can build it, a stub that
+## recognises nothing where it cannot (macOS) -- see SpellRecognizer. The
+## canvas never asks which: it feeds strokes in and reports what comes back.
+var spell_engine: SpellRecognizer = SpellRecognizer.new()
 
 
 func begin_stroke() -> void:

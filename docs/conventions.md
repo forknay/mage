@@ -20,7 +20,8 @@ res://
     ui/              hud.tscn, grimoire.tscn, menus, end screens
   scripts/
     autoload/        spell_registry.gd, audio_bus.gd, telemetry.gd
-    glyph/           the draw canvas: glyph_plane.gd, glyph_canvas.gd
+    glyph/           the draw canvas: glyph_plane.gd, glyph_canvas.gd,
+                     spell_recognizer.gd
     components/      health.gd, interactable.gd
     spell_engine/    the native C++ recogniser, built by Jenova
   resources/
@@ -32,6 +33,11 @@ res://
       spells/        one JSON per spell layout
     audio/  models/  fonts/
 ```
+
+`scripts/glyph/spell_recognizer.gd` is the only file that names the native
+`GodotSpellEngine` class, which is what lets the project open on a machine
+where Jenova cannot build it — see `CONTRIBUTING.md` §7. Call the recogniser
+through `SpellRecognizer`; do not reach past it.
 
 The spell data deliberately lives under `assets/`, not `resources/`: it is
 read by the C++ engine through `std::filesystem` from paths relative to the
