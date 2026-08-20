@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" uid="uid://uqduynf1y6af" path="res://scenes/player/player.gd" id="1_player"]
 [ext_resource type="PackedScene" path="res://scenes/player/spell_caster.tscn" id="2_caster"]
+[ext_resource type="Script" uid="uid://dtocgd25kckrt" path="res://scripts/PlayerLookAt3D.gd" id="2_lvxji"]
 [ext_resource type="PackedScene" path="res://scenes/ui/crosshair.tscn" id="3_crosshair"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
@@ -27,6 +28,10 @@ mesh = SubResource("CapsuleMesh_1")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 0)
 
 [node name="Camera3D" type="Camera3D" parent="Head" unique_id=1881069692]
+
+[node name="PlayerLookAt3D" type="RayCast3D" parent="Head/Camera3D" unique_id=1107627510]
+script = ExtResource("2_lvxji")
+metadata/_custom_type_script = "uid://dtocgd25kckrt"
 
 [node name="SpellCaster" parent="." unique_id=1264348534 node_paths=PackedStringArray("camera") instance=ExtResource("2_caster")]
 camera = NodePath("../Head/Camera3D")

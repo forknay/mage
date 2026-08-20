@@ -1,41 +1,19 @@
 extends Node3D
 
-## Emitted once, the first time the player opens this chest.
 signal opened
 
-## How close the player has to be to interact, in metres. Measured on the
-## horizontal plane only, so standing on a ledge above a chest does not count.
-@export var interact_range: float = 2.0
-
 @onready var model: Node3D = $Model
+@onready var interact_agent: InteractAgent3D = $Interact3D
 
-var player: Node3D
 var is_open: bool = false
 
 
 func _ready() -> void:
-	player = get_tree().get_first_node_in_group("player")
+	interact_agent.interacted.connect(open)
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if is_open or player == null or not event.is_action_pressed("interact"):
-		return
-	if not player_in_range():
-		return
-	# Claiming the event stops a second chest behind this one from opening on the
-	# same key press.
-	get_viewport().set_input_as_handled()
-	open()
-
-
-func player_in_range() -> bool:
-	var offset: Vector3 = player.global_position - global_position
-	return Vector2(offset.x, offset.z).length() <= interact_range
-
-
-## Placeholder: for now the chest just vanishes, which is enough to see that the
-## interaction fired. Replace the body of this with the lid animation, loot, etc.
 func open() -> void:
 	is_open = true
+	interact_agent.set_enabled(false)
 	model.visible = false
 	opened.emit()

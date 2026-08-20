@@ -5,7 +5,7 @@
 [ext_resource type="MeshLibrary" uid="uid://1udhi3yg0o5p" path="res://scenes/level/tileset.tres" id="2_0xm2m"]
 [ext_resource type="PackedScene" uid="uid://bnex0kfkhs3g8" path="res://scenes/enemies/enemy.tscn" id="4_1bvp3"]
 [ext_resource type="PackedScene" path="res://scenes/level/props/torch.tscn" id="5_lquwl"]
-[ext_resource type="PackedScene" path="res://scenes/level/props/chest.tscn" id="6_7mycd"]
+[ext_resource type="PackedScene" uid="uid://dvy8ne0l1i5ut" path="res://scenes/level/props/chest.tscn" id="6_7mycd"]
 [ext_resource type="PackedScene" uid="uid://cqlgcg2plg3fw" path="res://mage_enemy.tscn" id="7_2hqms"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]

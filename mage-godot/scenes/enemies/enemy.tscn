@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://rd7khpkq7e5k" path="res://scenes/enemies/enemy.gd" id="1_7k104"]
 [ext_resource type="PackedScene" uid="uid://ge7l4g8qp2jf" path="res://assets/models/slime_low-poly.glb" id="2_slime"]
-[ext_resource type="Script" uid="uid://b7qk7juyuy0g4" path="res://scenes/utils/VisionAgent3D.gd" id="3_38ino"]
+[ext_resource type="Script" uid="uid://b7qk7juyuy0g4" path="res://scripts/VisionAgent3D.gd" id="3_38ino"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_xk8u7"]
 radius = 0.73046875
