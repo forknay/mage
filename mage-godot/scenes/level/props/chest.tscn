@@ -1,27 +1,25 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene format=3 uid="uid://dvy8ne0l1i5ut"]
 
 [ext_resource type="PackedScene" uid="uid://day63peiciw2p" path="res://assets/models/stylized_chest.glb" id="1_chest"]
-[ext_resource type="Script" path="res://scenes/level/props/chest.gd" id="2_chest"]
+[ext_resource type="Script" uid="uid://bbgflhnw0a70i" path="res://scenes/level/props/chest.gd" id="2_chest"]
+[ext_resource type="Script" uid="uid://bo1ic5gqcawl5" path="res://scripts/Interact3D.gd" id="3_7glel"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_chest"]
 size = Vector3(0.96, 0.58, 0.66)
 
-[node name="Chest" type="Node3D"]
+[node name="Chest" type="Node3D" unique_id=377920581]
 script = ExtResource("2_chest")
 
-; Rotated -90 degrees on Y so the lock face points down -Z, Godot's forward, the
-; same convention the torch uses. Scaled to 0.9 and offset so the centre of the
-; chest's base sits at the scene origin, which puts it on the floor when the
-; node's Y is the floor height.
-[node name="Model" parent="." instance=ExtResource("1_chest")]
+[node name="Model" parent="." unique_id=1740008710 instance=ExtResource("1_chest")]
 transform = Transform3D(0, 0, 0.9, 0, 0.9, 0, -0.9, 0, 0, 0.1328, 0.215, -0.0134)
 
-; On the world layer so the player, whose mask covers world and enemies, walks
-; into it. The chest never needs to detect anything itself, hence mask 0.
-[node name="Body" type="StaticBody3D" parent="."]
-collision_layer = 1
+[node name="Body" type="StaticBody3D" parent="." unique_id=695912050]
 collision_mask = 0
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Body"]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Body" unique_id=617832390]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.29, 0)
 shape = SubResource("BoxShape3D_chest")
+
+[node name="Interact3D" type="Node3D" parent="." unique_id=74773438]
+script = ExtResource("3_7glel")
+metadata/_custom_type_script = "uid://bo1ic5gqcawl5"
